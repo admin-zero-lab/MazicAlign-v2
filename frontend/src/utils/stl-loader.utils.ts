@@ -1,6 +1,38 @@
-import { Scene, Mesh, Vector3, Quaternion, Color3, StandardMaterial } from '@babylonjs/core';
+import { Scene, Mesh, Vector3, Quaternion, Color3, StandardMaterial, Material, MaterialPluginBase, PointerDragBehavior } from '@babylonjs/core';
+import type { Nullable } from '@babylonjs/core';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import type { Transform } from '@types/stl.types';
+
+/**
+ * 바닥면(월드 Y=0) 아래로 통과한 부분을 빨간색으로 표시하는 머티리얼 플러그인
+ */
+class FloorClipMaterialPlugin extends MaterialPluginBase {
+  constructor(material: Material) {
+    super(material, 'FloorClip', 200, {});
+    this._enable(true);
+  }
+
+  getClassName(): string {
+    return 'FloorClipMaterialPlugin';
+  }
+
+  getCustomCode(shaderType: string): Nullable<{ [pointName: string]: string }> {
+    if (shaderType === 'vertex') {
+      return {
+        CUSTOM_VERTEX_DEFINITIONS: 'varying float vFloorWorldY;',
+        CUSTOM_VERTEX_MAIN_END: 'vFloorWorldY = worldPos.y;',
+      };
+    }
+    if (shaderType === 'fragment') {
+      return {
+        CUSTOM_FRAGMENT_DEFINITIONS: 'varying float vFloorWorldY;',
+        CUSTOM_FRAGMENT_BEFORE_FRAGCOLOR:
+          'if (vFloorWorldY < 0.0) { color.rgb = vec3(0.85, 0.1, 0.1); }',
+      };
+    }
+    return null;
+  }
+}
 
 /**
  * STL 파일 로드
@@ -76,11 +108,51 @@ export const loadSTLFile = async (
         mesh.position.set(0, 0, 0);
         mesh.refreshBoundingInfo();
 
+        // 5. 빌드스테이지 바닥면 안착 보정
+        //    버텍스를 바운딩박스 '중심'으로 재배치했기 때문에, originalCenter.y 를 그대로 두면
+        //    applyTransform에서 객체 '중심'이 바닥면(Y=0)에 놓여 절반이 바닥 아래로 잠긴다.
+        //    originalCenter.y 를 로컬 반높이로 보정하면 translation.z=0 일 때 객체 '바닥'이
+        //    Y=0(빌드스테이지 바닥면)에 정확히 닿는다. applyTransform/getTransformFromMesh 가
+        //    동일한 originalCenter 를 사용하므로 변환 왕복 일관성은 그대로 유지된다.
+        originalCenter.y = mesh.getBoundingInfo().boundingBox.extendSize.y;
+
         // 기본 재질 설정
         const material = new StandardMaterial(`${fileName}_material`, scene);
-        material.diffuseColor = new Color3(0.8, 0.8, 0.9);
+        // 연회색 배경에서 잘 보이면서 눈의 피로를 덜어주는 차분한 청록색(세이지 틸)
+        material.diffuseColor = new Color3(0.42, 0.6, 0.56);
         material.specularColor = new Color3(0.2, 0.2, 0.2);
+        // 바닥면 아래로 통과한 부분을 빨간색으로 표시
+        new FloorClipMaterialPlugin(material);
         mesh.material = material;
+
+        // 바닥면(월드 XZ 평면) 위에서만 이동하는 드래그 비헤이비어
+        // dragPlaneNormal=(0,1,0) → 마우스 광선을 수평면에 투영
+        // moveAttached=false → behavior가 메쉬를 직접 옮기지 않음. 드래그 delta 중
+        // X·Z 성분만 직접 적용하여 Y(상하) 이동을 원천적으로 차단(회전도 발생하지 않음).
+        const floorDragBehavior = new PointerDragBehavior({
+          dragPlaneNormal: new Vector3(0, 1, 0),
+        });
+        floorDragBehavior.useObjectOrientationForDragging = false; // 월드 기준 평면 고정
+        floorDragBehavior.detachCameraControls = false; // 카메라 제어와 분리
+        floorDragBehavior.moveAttached = false; // 위치는 아래에서 직접 제어
+        floorDragBehavior.updateDragPlane = false; // 드래그 평면을 수평으로 고정
+        floorDragBehavior.enabled = false; // 선택 시에만 활성화
+
+        // 드래그 시 X·Z(바닥면)만 이동 — mesh.position.y 는 절대 변경하지 않음
+        const dragTargetMesh = mesh;
+        let dragLockedY = 0;
+        floorDragBehavior.onDragStartObservable.add(() => {
+          // 드래그 시작 시점의 높이(Y)를 기록
+          dragLockedY = dragTargetMesh.position.y;
+        });
+        floorDragBehavior.onDragObservable.add((event) => {
+          dragTargetMesh.position.x += event.delta.x;
+          dragTargetMesh.position.z += event.delta.z;
+          // 매 드래그 프레임마다 Y를 시작값으로 강제 고정 (상하 이동 원천 차단)
+          dragTargetMesh.position.y = dragLockedY;
+        });
+
+        mesh.addBehavior(floorDragBehavior);
 
         // 메쉬 최적화
         mesh.convertToFlatShadedMesh();

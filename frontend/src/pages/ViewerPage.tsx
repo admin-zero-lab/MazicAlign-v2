@@ -4,7 +4,7 @@ import { Mesh, VertexBuffer } from '@babylonjs/core';
 import { useAuth } from '@hooks/useAuth';
 import { useProject } from '@hooks/useProjects';
 import { useSTLFiles } from '@hooks/useSTLFiles';
-import STLViewer from '@components/STLViewer';
+import STLViewer, { STLViewerHandle } from '@components/STLViewer';
 import STLFileList from '@components/STLFileList';
 import ViewerControls from '@components/ViewerControls';
 import TransformPanel from '@components/TransformPanel';
@@ -60,6 +60,7 @@ const ViewerPage: React.FC = () => {
   const pendingScaleUpdates = useRef<{ x?: number; y?: number; z?: number }>({});
   const scaleUpdateTimeout = useRef<NodeJS.Timeout | null>(null);
   const meshMapRef = useRef<Map<string, Mesh>>(new Map());
+  const stlViewerRef = useRef<STLViewerHandle>(null);
 
   // 선택된 파일 객체들
   const selectedFiles = stlFiles.filter((f) => selectedFileIds.has(f.stlId));
@@ -400,18 +401,15 @@ const ViewerPage: React.FC = () => {
    * 뷰어 컨트롤 핸들러들
    */
   const handleZoomIn = () => {
-    // TODO: 카메라 줌 인 구현
-    console.log('Zoom in');
+    stlViewerRef.current?.zoomIn();
   };
 
   const handleZoomOut = () => {
-    // TODO: 카메라 줌 아웃 구현
-    console.log('Zoom out');
+    stlViewerRef.current?.zoomOut();
   };
 
   const handleResetView = () => {
-    // TODO: 카메라 뷰 리셋 구현
-    console.log('Reset view');
+    stlViewerRef.current?.resetView();
   };
 
   /**
@@ -598,8 +596,9 @@ const ViewerPage: React.FC = () => {
         </aside>
 
         {/* 3D Viewer */}
-        <main className="flex-1 relative bg-gray-900">
+        <main className="flex-1 relative bg-gray-200">
           <STLViewer
+            ref={stlViewerRef}
             stlFiles={stlFiles}
             selectedFileIds={Array.from(selectedFileIds)}
             onMeshSelected={(id) => handleFileSelect(id, false)} // Viewer click selects single
