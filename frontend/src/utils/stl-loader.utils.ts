@@ -1,19 +1,22 @@
 import { Scene, Mesh, Vector3, Quaternion, Color3, StandardMaterial, Material, MaterialPluginBase, PointerDragBehavior } from '@babylonjs/core';
 import type { Nullable } from '@babylonjs/core';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
-import type { Transform } from '@types/stl.types';
+import type { Transform } from '@apptypes/stl.types';
 
 /**
- * 바닥면(월드 Y=0) 아래로 통과한 부분을 빨간색으로 표시하는 머티리얼 플러그인
+ * 바닥면(월드 Y=0)에 닿는 부분을 STL 색상의 보색(complementary color)으로 표시하는
+ * 머티리얼 플러그인. 바닥면으로부터 FLOOR_CONTACT_BAND(mm) 이내의 영역이 대상이다.
  */
-class FloorClipMaterialPlugin extends MaterialPluginBase {
+const FLOOR_CONTACT_BAND = 1.0; // 바닥면 접촉으로 간주하는 높이 범위(mm)
+
+class FloorContactMaterialPlugin extends MaterialPluginBase {
   constructor(material: Material) {
-    super(material, 'FloorClip', 200, {});
+    super(material, 'FloorContact', 200, {});
     this._enable(true);
   }
 
   getClassName(): string {
-    return 'FloorClipMaterialPlugin';
+    return 'FloorContactMaterialPlugin';
   }
 
   getCustomCode(shaderType: string): Nullable<{ [pointName: string]: string }> {
@@ -26,8 +29,9 @@ class FloorClipMaterialPlugin extends MaterialPluginBase {
     if (shaderType === 'fragment') {
       return {
         CUSTOM_FRAGMENT_DEFINITIONS: 'varying float vFloorWorldY;',
+        // 바닥면 접촉 영역 → STL 색상(vDiffuseColor)의 보색으로 표시
         CUSTOM_FRAGMENT_BEFORE_FRAGCOLOR:
-          'if (vFloorWorldY < 0.0) { color.rgb = vec3(0.85, 0.1, 0.1); }',
+          `if (vFloorWorldY < ${FLOOR_CONTACT_BAND.toFixed(1)}) { color.rgb = vec3(1.0) - vDiffuseColor.rgb; }`,
       };
     }
     return null;
@@ -114,6 +118,9 @@ export const loadSTLFile = async (
         //    originalCenter.y 를 로컬 반높이로 보정하면 translation.z=0 일 때 객체 '바닥'이
         //    Y=0(빌드스테이지 바닥면)에 정확히 닿는다. applyTransform/getTransformFromMesh 가
         //    동일한 originalCenter 를 사용하므로 변환 왕복 일관성은 그대로 유지된다.
+        //    x, z = 0 으로 두면 translation(0,0) 일 때 객체가 빌드스테이지 정중앙(검정 점)에 위치.
+        originalCenter.x = 0;
+        originalCenter.z = 0;
         originalCenter.y = mesh.getBoundingInfo().boundingBox.extendSize.y;
 
         // 기본 재질 설정
@@ -121,8 +128,8 @@ export const loadSTLFile = async (
         // 연회색 배경에서 잘 보이면서 눈의 피로를 덜어주는 차분한 청록색(세이지 틸)
         material.diffuseColor = new Color3(0.42, 0.6, 0.56);
         material.specularColor = new Color3(0.2, 0.2, 0.2);
-        // 바닥면 아래로 통과한 부분을 빨간색으로 표시
-        new FloorClipMaterialPlugin(material);
+        // 바닥면에 닿는 부분을 STL 색상의 보색으로 표시
+        new FloorContactMaterialPlugin(material);
         mesh.material = material;
 
         // 바닥면(월드 XZ 평면) 위에서만 이동하는 드래그 비헤이비어
@@ -160,7 +167,7 @@ export const loadSTLFile = async (
         resolve(mesh);
       },
       null,
-      (scene, message, exception) => {
+      (_scene, message) => {
         reject(new Error(`Failed to load STL: ${message}`));
       },
       '.stl'
@@ -181,7 +188,7 @@ export const loadSTLFile = async (
  * Y (화면 밖, 카메라)          Z (화면 안쪽)
  * 
  * 축 매핑:
- *   사용자 X  →  Babylon X  (변환 없음)
+ *   사용자 X  →  Babylon X  (정방향: 홈 탑뷰의 좌우 방향을 반전)
  *   사용자 Y  →  Babylon -Z (Y→Z, 반전: 화면 밖 = Z-)
  *   사용자 Z  →  Babylon Y  (Z→Y, 위)
  */
@@ -202,8 +209,10 @@ export const applyTransform = (mesh: Mesh, transform: Transform): void => {
   // User Y -> Babylon -Z (if Y is forward/depth)
   // User Z -> Babylon Y (Up)
 
+  // 사용자 X 축은 Babylon X 와 부호를 동일하게 매핑한다.
+  // (이전에는 반전 매핑이었으나, 홈 탑뷰의 좌우 방향이 반대로 보여 정방향으로 변경)
   mesh.position = new Vector3(
-    originalCenter.x + transform.translation.x,    // X
+    originalCenter.x + transform.translation.x,    // User X -> Babylon X
     originalCenter.y + transform.translation.z,    // User Z -> Babylon Y
     originalCenter.z - transform.translation.y     // User Y -> Babylon -Z
   );
@@ -259,6 +268,74 @@ export const getTransformFromMesh = (mesh: Mesh): Transform => {
       z: mesh.scaling.y,        // Babylon Y → 사용자 Z
     },
   };
+};
+
+/**
+ * 메쉬를 빌드스테이지 정중앙(X=0, Z=0) + 바닥면(Y=0) 위에 정렬
+ */
+export const centerMeshOnFloor = (mesh: Mesh): void => {
+  mesh.position.x = 0;
+  mesh.position.z = 0;
+  mesh.computeWorldMatrix(true);
+  // 바닥면(Y=0) 위에 안착하도록 높이 보정
+  const minY = mesh.getBoundingInfo().boundingBox.minimumWorld.y;
+  mesh.position.y -= minY;
+  mesh.computeWorldMatrix(true);
+};
+
+/**
+ * 리셋용 배열 함수.
+ * 입력된 모든 메쉬의 회전을 0(기본 자세)으로 되돌린 뒤, X축을 따라 빌드스테이지
+ * 정중앙(원점)을 기준으로 gap(mm) 간격을 유지하며 일렬로 배열하고, 각 메쉬를
+ * 바닥면(Y=0)에 안착시킨다.
+ */
+export const arrangeMeshesCentered = (meshes: Mesh[], gap: number): void => {
+  if (meshes.length === 0) return;
+
+  // 1) 회전 초기화 — 축 정렬 폭을 정확히 측정하기 위해 먼저 수행
+  meshes.forEach((mesh) => {
+    mesh.rotationQuaternion = Quaternion.Identity();
+    mesh.computeWorldMatrix(true);
+  });
+
+  // 2) 각 메쉬의 X축 폭 측정 (위치와 무관하게 max-min)
+  const widths = meshes.map((mesh) => {
+    const bb = mesh.getBoundingInfo().boundingBox;
+    return bb.maximumWorld.x - bb.minimumWorld.x;
+  });
+
+  // 3) 전체 배열 폭 → 중앙 기준 좌측 시작점
+  const totalWidth =
+    widths.reduce((sum, w) => sum + w, 0) + gap * (meshes.length - 1);
+  let cursor = -totalWidth / 2;
+
+  // 4) 좌→우로 배치하고 각 메쉬를 바닥면에 안착
+  meshes.forEach((mesh, i) => {
+    const w = widths[i];
+    // 메쉬 로컬 원점 = 바운딩박스 중심이므로 position.x = 배치 중심 X
+    mesh.position.x = cursor + w / 2;
+    mesh.position.z = 0;
+    cursor += w + gap;
+    mesh.computeWorldMatrix(true);
+    // 바닥면(Y=0) 위에 안착
+    const minY = mesh.getBoundingInfo().boundingBox.minimumWorld.y;
+    mesh.position.y -= minY;
+    mesh.computeWorldMatrix(true);
+  });
+};
+
+/**
+ * 메쉬가 바닥면(Y=0) 아래로 침투한 경우 위로 들어올려 안착시킨다.
+ * 일반 이동·회전으로 인한 바닥면 침투를 막는 용도. 사용자가 Z(높이) 축에 음수
+ * 값을 명시적으로 입력한 경우에는 이 함수를 호출하지 않아 침투를 허용한다.
+ */
+export const clampMeshAboveFloor = (mesh: Mesh): void => {
+  mesh.computeWorldMatrix(true);
+  const minY = mesh.getBoundingInfo().boundingBox.minimumWorld.y;
+  if (minY < -0.0001) {
+    mesh.position.y -= minY;
+    mesh.computeWorldMatrix(true);
+  }
 };
 
 /**

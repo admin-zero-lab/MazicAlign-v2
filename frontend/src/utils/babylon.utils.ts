@@ -63,6 +63,10 @@ export const createCamera = (scene: Scene, canvas: HTMLCanvasElement): ArcRotate
   // useCtrlForPanning = false (Ctrl 키 없이 패닝)
   camera.attachControl(canvas, true, false);
 
+  // 화살표 키는 모델의 Z축(상하) 이동 단축키로 사용하므로
+  // 카메라 기본 키보드 이동 입력을 제거해 키 충돌을 방지한다.
+  camera.inputs.removeByType('ArcRotateCameraKeyboardMoveInput');
+
   // 줌 속도 개선
   // wheelPrecision: default 50. Lower is faster.
   camera.wheelPrecision = 10;
@@ -201,9 +205,12 @@ export const createGrid = (scene: Scene): void => {
   makeEdge('stageBorderLeft', borderW, stageZ + borderW, -halfX, 0);
   makeEdge('stageBorderRight', borderW, stageZ + borderW, halfX, 0);
 
-  // 전면부 표시 — 정면(+Z) 가장자리 중앙, 바깥으로 돌출된 얇고 긴 직사각형 + "전면" 글자
-  const frontW = 70; // 가로 길이(X) — 길게
-  const frontD = 6; // 두께(Z 돌출 깊이) — 얇게
+  // 전면부 표시 — 정면(+Z) 가장자리 중앙
+  // 규격: 좌우(X) 50mm × 폭(Z) 10mm
+  const frontW = 50; // 좌우(X) 길이
+  const frontD = 10; // 폭(Z 깊이)
+
+  // 검정 박스 — 베이스(바닥면)와 평행하게 눕힌 납작한 막대
   const frontMarker = MeshBuilder.CreateBox(
     'stageFrontMarker',
     { width: frontW, height: borderH, depth: frontD },
@@ -211,20 +218,67 @@ export const createGrid = (scene: Scene): void => {
   );
   frontMarker.position = new Vector3(0, 0, halfZ + borderW / 2 + frontD / 2);
   frontMarker.isPickable = false;
+  frontMarker.material = blackMat; // 단색 검정 (베이스와 평행 유지)
 
-  // "전면" 텍스트 텍스처 (검정 배경 + 흰색 글자)
-  const frontTex = new DynamicTexture('stageFrontTex', { width: 700, height: 60 }, scene, true);
-  const fctx = frontTex.getContext();
+  // "FRONT" 텍스트 — X축 기준 90° 세운 수직 평면 (박스는 그대로, 글자만 회전)
+  // 텍스처 종횡비를 평면(frontW : frontD)과 동일하게 맞춰 글자 왜곡 방지
+  const texScale = 16; // mm당 픽셀
+  const fTexW = Math.round(frontW * texScale); // 평면 길이(좌우)
+  const fTexH = Math.round(frontD * texScale); // 평면 높이
+  const frontTex = new DynamicTexture('stageFrontTex', { width: fTexW, height: fTexH }, scene, true);
+  const fctx = frontTex.getContext() as unknown as CanvasRenderingContext2D;
+
+  // 검정 배경
   fctx.fillStyle = '#000000';
-  fctx.fillRect(0, 0, 700, 60);
-  frontTex.drawText('FRONT', null, 46, 'bold 46px sans-serif', '#ffffff', null, true);
+  fctx.fillRect(0, 0, fTexW, fTexH);
+
+  // 글자가 평면을 벗어나지 않도록 폰트 크기 자동 계산
+  // 가로쓰기: 글자 높이 → 평면 높이(fTexH), 글자 길이 → 평면 길이(fTexW)에 대응
+  const frontText = 'FRONT';
+  const marginRatio = 0.86; // 안쪽 여백(약 14%) 확보
+  const capHeightFactor = 0.72; // 900 weight 대문자 실제 높이 ≈ 폰트 크기 × 0.72
+  // 1) 평면 높이 기준 폰트 크기
+  let fontSize = (fTexH * marginRatio) / capHeightFactor;
+  // 2) 평면 길이를 넘으면 길이 기준으로 축소
+  fctx.font = `900 ${fontSize}px sans-serif`;
+  const lenLimit = fTexW * marginRatio;
+  const measuredLen = fctx.measureText(frontText).width;
+  if (measuredLen > lenLimit) {
+    fontSize *= lenLimit / measuredLen;
+  }
+  fontSize = Math.floor(fontSize);
+
+  // 흰색 글자 렌더링 — X축 기준 좌우반전 (가로쓰기, 평면 정중앙)
+  fctx.font = `900 ${fontSize}px sans-serif`;
+  fctx.textAlign = 'center';
+  fctx.textBaseline = 'middle';
+  fctx.fillStyle = '#ffffff';
+  fctx.save();
+  fctx.translate(fTexW, fTexH);
+  fctx.scale(-1, -1); // X축 기준 좌우반전 + 상하 반전
+  fctx.fillText(frontText, fTexW / 2, fTexH / 2);
+  fctx.restore();
+  frontTex.update();
 
   const frontMat = new StandardMaterial('stageFrontMat', scene);
   frontMat.diffuseTexture = frontTex;
   frontMat.emissiveTexture = frontTex; // 조명과 무관하게 글자 선명
   frontMat.specularColor = new Color3(0, 0, 0);
   frontMat.disableLighting = true;
-  frontMarker.material = frontMat;
+  frontMat.backFaceCulling = false; // 양면 표시
+
+  // "FRONT" 글자 평면 — 바닥과 평행하게 눕힌 수평 평면 (검정 박스 윗면)
+  // CreatePlane은 기본적으로 XY평면(수직)에 생성됨 → X축으로 90° 눕혀 바닥과 평행
+  const frontTextPlane = MeshBuilder.CreatePlane(
+    'stageFrontText',
+    { width: frontW, height: frontD, sideOrientation: Mesh.DOUBLESIDE },
+    scene
+  );
+  frontTextPlane.rotation.x = Math.PI / 2; // X축 기준 90° → 바닥과 평행
+  // 검정 박스 윗면에 평행하게 배치 (Z-fighting 방지용 미세 오프셋)
+  frontTextPlane.position = new Vector3(0, borderH / 2 + 0.02, halfZ + borderW / 2 + frontD / 2);
+  frontTextPlane.isPickable = false;
+  frontTextPlane.material = frontMat;
 
   // 바닥면 정중앙 표시 (검은색 점)
   const centerDot = MeshBuilder.CreateSphere('centerDot', { diameter: 6, segments: 24 }, scene);

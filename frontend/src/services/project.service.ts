@@ -1,4 +1,4 @@
-import type { Project, CreateProjectRequest, UpdateProjectRequest } from '@types/project.types';
+import type { Project, CreateProjectRequest, UpdateProjectRequest } from '@apptypes/project.types';
 
 const API_BASE = '/api/projects';
 
@@ -10,7 +10,7 @@ const parseProject = (data: Record<string, unknown>): Project => ({
   ownerId: data.ownerId as string,
   projectCode: data.projectCode as string,
   projectName: data.projectName as string,
-  patientInfo: (data.patientInfo as Record<string, unknown>) || {},
+  patientInfo: (data.patientInfo as Project['patientInfo']) || ({} as Project['patientInfo']),
   createdAt: new Date(data.createdAt as string),
   lastModified: new Date(data.lastModified as string),
 });

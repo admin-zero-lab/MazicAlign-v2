@@ -6,7 +6,7 @@ import {
   updateProject as updateProjectService,
   deleteProject as deleteProjectService,
 } from '@services/project.service';
-import type { Project, CreateProjectRequest, UpdateProjectRequest } from '@types/project.types';
+import type { Project, CreateProjectRequest, UpdateProjectRequest } from '@apptypes/project.types';
 
 /**
  * 프로젝트 관리 커스텀 훅

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { getAdjustmentLogsBySTLId, deleteAdjustmentLog, deleteAllAdjustmentLogs } from '@services/stl.service';
-import type { AdjustmentLog } from '@types/stl.types';
+import type { AdjustmentLog } from '@apptypes/stl.types';
 
 /**
  * 조정 로그 관리 커스텀 훅

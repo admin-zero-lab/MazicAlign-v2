@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@hooks/useAuth';
-import { UserRole } from '@types/auth.types';
+import { UserRole } from '@apptypes/auth.types';
 
 /**
  * 로그인 페이지

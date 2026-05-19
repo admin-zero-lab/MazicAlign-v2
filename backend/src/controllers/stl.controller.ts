@@ -159,9 +159,9 @@ export const deleteSTLFile = async (req: Request, res: Response): Promise<void> 
 export const createLog = async (req: Request, res: Response): Promise<void> => {
   try {
     const { stlId } = req.params;
-    const { projectId, userId, adjustmentType, deltaValue } = req.body;
+    const { projectId, userId, adjustmentType, deltaValue, transform } = req.body;
 
-    if (!projectId || !userId || !adjustmentType || !deltaValue) {
+    if (!projectId || !userId || !adjustmentType || !deltaValue || !transform) {
       res.status(400).json({ success: false, error: 'Missing required log fields' });
       return;
     }
@@ -172,11 +172,65 @@ export const createLog = async (req: Request, res: Response): Promise<void> => {
       userId,
       adjustmentType,
       deltaValue,
+      transform,
     });
 
     res.status(201).json({ success: true, data: log });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Failed to create adjustment log' });
+  }
+};
+
+/**
+ * STL 파일 복제 (Copy & Paste)
+ * 원본 STL 파일을 디스크에서 복사하고, 동일한 변환 상태의 새 레코드를 생성한다.
+ */
+export const duplicateSTLFile = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { stlId } = req.params;
+
+    const source = await stlService.getSTLFileById(stlId);
+    if (!source) {
+      res.status(404).json({ success: false, error: 'Source STL file not found' });
+      return;
+    }
+
+    // 원본 파일의 디스크 경로 (originalUrl 예: /uploads/stl/{projectId}/{fileName})
+    const srcPath = path.join(process.cwd(), source.originalUrl);
+    if (!fs.existsSync(srcPath)) {
+      res.status(404).json({ success: false, error: 'Source file not found on disk' });
+      return;
+    }
+
+    const destDir = path.dirname(srcPath);
+    const ext = path.extname(source.fileName);
+    const base = path.basename(source.fileName, ext);
+
+    // 중복되지 않는 파일명 생성: "name (copy).stl", "name (copy 2).stl" ...
+    let copyName = `${base} (copy)${ext}`;
+    let counter = 2;
+    while (fs.existsSync(path.join(destDir, copyName))) {
+      copyName = `${base} (copy ${counter})${ext}`;
+      counter += 1;
+    }
+
+    fs.copyFileSync(srcPath, path.join(destDir, copyName));
+
+    const fileUrl = `/uploads/stl/${source.projectId}/${copyName}`;
+    const duplicated = await stlService.createSTLFileWithTransform(
+      {
+        projectId: source.projectId,
+        originalUrl: fileUrl,
+        fileName: copyName,
+        fileSize: source.fileSize,
+      },
+      source.currentTransform
+    );
+
+    res.status(201).json({ success: true, data: duplicated });
+  } catch (error) {
+    console.error('Error duplicating STL file:', error);
+    res.status(500).json({ success: false, error: 'Failed to duplicate STL file' });
   }
 };
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { STLFile, AdjustmentType } from '@types/stl.types';
+import { STLFile, AdjustmentType } from '@apptypes/stl.types';
 
 interface TransformPanelProps {
   selectedFile: STLFile | null;

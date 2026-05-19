@@ -1,4 +1,4 @@
-import { Vector3, Quaternion } from '@babylonjs/core';
+import { Quaternion } from '@babylonjs/core';
 
 /**
  * Euler 각도를 Quaternion으로 변환

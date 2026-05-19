@@ -1,19 +1,17 @@
 interface ViewerControlsProps {
-  onZoomIn?: () => void;
-  onZoomOut?: () => void;
   onResetView?: () => void;
+  onHome?: () => void;
   onToggleWireframe?: () => void;
   className?: string;
 }
 
 /**
  * 뷰어 컨트롤 컴포넌트
- * 3D 뷰어의 줌, 리셋 등 제어 버튼 제공
+ * 3D 뷰어의 리셋 등 제어 버튼 제공
  */
 const ViewerControls: React.FC<ViewerControlsProps> = ({
-  onZoomIn,
-  onZoomOut,
   onResetView,
+  onHome,
   onToggleWireframe,
   className = '',
 }) => {
@@ -22,13 +20,13 @@ const ViewerControls: React.FC<ViewerControlsProps> = ({
 
   return (
     <div className={`flex flex-col space-y-2 ${className}`}>
-      {/* 줌 인 */}
-      {onZoomIn && (
+      {/* HOME — 뷰어(카메라)를 기본 위치로 초기화 */}
+      {onHome && (
         <button
-          onClick={onZoomIn}
+          onClick={onHome}
           className={buttonClass}
-          title="Zoom In"
-          aria-label="Zoom In"
+          title="Home View"
+          aria-label="Home View"
         >
           <svg
             className="w-5 h-5 text-gray-700"
@@ -40,42 +38,18 @@ const ViewerControls: React.FC<ViewerControlsProps> = ({
               strokeLinecap="round"
               strokeLinejoin="round"
               strokeWidth={2}
-              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v6m3-3H7"
+              d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"
             />
           </svg>
         </button>
       )}
 
-      {/* 줌 아웃 */}
-      {onZoomOut && (
-        <button
-          onClick={onZoomOut}
-          className={buttonClass}
-          title="Zoom Out"
-          aria-label="Zoom Out"
-        >
-          <svg
-            className="w-5 h-5 text-gray-700"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7"
-            />
-          </svg>
-        </button>
-      )}
-
-      {/* 뷰 리셋 */}
+      {/* 초기화 — 입력된 STL 파일들을 정중앙으로 배열 */}
       {onResetView && (
         <button
           onClick={onResetView}
           className={buttonClass}
-          title="Reset View"
+          title="초기화 (정중앙 배열)"
           aria-label="Reset View"
         >
           <svg

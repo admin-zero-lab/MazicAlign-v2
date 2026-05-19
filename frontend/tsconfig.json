@@ -20,8 +20,7 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
 
-    /* Path Mapping */
-    "baseUrl": ".",
+    /* Path Mapping (paths 값이 상대경로이므로 baseUrl 불필요 — TS 5.0+) */
     "paths": {
       "@/*": ["./src/*"],
       "@components/*": ["./src/components/*"],
@@ -29,7 +28,7 @@
       "@hooks/*": ["./src/hooks/*"],
       "@services/*": ["./src/services/*"],
       "@utils/*": ["./src/utils/*"],
-      "@types/*": ["./src/types/*"],
+      "@apptypes/*": ["./src/types/*"],
       "@config/*": ["./src/config/*"]
     }
   },

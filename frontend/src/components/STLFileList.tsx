@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { STLFile } from '@types/stl.types';
+import type { STLFile } from '@apptypes/stl.types';
 
 interface STLFileListProps {
   stlFiles: STLFile[];
@@ -20,6 +20,7 @@ const STLFileList: React.FC<STLFileListProps> = ({
   onToggleVisibility,
   onDeleteFile,
   onSelectFile,
+  onClearSelection,
   selectedFileIds,
   className = '',
 }) => {
@@ -152,7 +153,7 @@ const STLFileList: React.FC<STLFileListProps> = ({
                   type="checkbox"
                   checked={selectedFileIds?.has(file.stlId) || false}
                   onClick={(e) => e.stopPropagation()}
-                  onChange={(e) => {
+                  onChange={() => {
                     // Force multi-select behavior when using checkbox
                     onSelectFile?.(file.stlId, true);
                   }}

@@ -1,4 +1,4 @@
-import { SlicerWorkerMessage, SlicerWorkerResponse, LayerData } from './types';
+import { SlicerWorkerMessage, SlicerWorkerResponse } from './types';
 import { SliceEngine } from './SliceEngine';
 import { GCodeGenerator } from './GCodeGenerator';
 import { ImageGenerator } from './ImageGenerator';

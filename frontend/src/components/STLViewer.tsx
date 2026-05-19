@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
-import { Engine, Scene, ArcRotateCamera, Mesh, GizmoManager, UtilityLayerRenderer, IPointerEvent, PointerDragBehavior } from '@babylonjs/core';
+import { Engine, Scene, ArcRotateCamera, Mesh, GizmoManager, UtilityLayerRenderer, IPointerEvent, PointerDragBehavior, Vector3 } from '@babylonjs/core';
 import {
   createEngine,
   createScene,
@@ -17,8 +17,19 @@ import {
   applyTransform,
   setMeshVisibility,
   setMeshOpacity,
+  centerMeshOnFloor,
+  clampMeshAboveFloor,
+  arrangeMeshesCentered,
+  getTransformFromMesh,
 } from '@utils/stl-loader.utils';
-import type { STLFile } from '@types/stl.types';
+import type { STLFile } from '@apptypes/stl.types';
+import type { SupportPoint, SupportSettings, SupportMode } from '@apptypes/support.types';
+import {
+  generateAutoSupports as buildAutoSupports,
+  buildSupportMesh,
+  getSupportMaterial,
+  raycastDown,
+} from '@utils/support.utils';
 
 interface STLViewerProps {
   stlFiles: STLFile[];
@@ -28,6 +39,12 @@ interface STLViewerProps {
   onGizmoTransformChange?: (stlId: string, mesh: Mesh) => void;  // Gizmo 드래그 완료 시
   onBackgroundClick?: () => void; // 배경 클릭 시
   unselectedOpacity?: number; // 선택되지 않은 객체의 투명도 (0~1)
+  // 서포트 관련
+  supports?: SupportPoint[];           // 렌더링할 서포트 목록
+  supportSettings?: SupportSettings;   // 서포트 형상 설정
+  supportMode?: SupportMode;           // 'off' | 'add' | 'delete'
+  supportsVisible?: boolean;           // 서포트 표시 여부
+  onSupportsChange?: (supports: SupportPoint[]) => void; // 수동 추가/삭제 시
   className?: string;
 }
 
@@ -38,6 +55,11 @@ export interface STLViewerHandle {
   zoomIn: () => void;
   zoomOut: () => void;
   resetView: () => void;
+  homeView: () => void;
+  /** 모델의 오버행을 분석해 자동 서포트 점을 생성한다 */
+  generateSupports: (stlId: string, settings: SupportSettings, platformOnly: boolean) => SupportPoint[];
+  /** 현재 씬의 서포트 메쉬 목록 (슬라이싱용) */
+  getSupportMeshes: () => Mesh[];
 }
 
 /**
@@ -52,6 +74,11 @@ const STLViewer = forwardRef<STLViewerHandle, STLViewerProps>(({
   onGizmoTransformChange,
   onBackgroundClick,
   unselectedOpacity = 1, // Default to opaque
+  supports = [],
+  supportSettings,
+  supportMode = 'off',
+  supportsVisible = true,
+  onSupportsChange,
   className = '',
 }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -61,6 +88,11 @@ const STLViewer = forwardRef<STLViewerHandle, STLViewerProps>(({
   const meshMapRef = useRef<Map<string, Mesh>>(new Map());
   const utilityLayerRef = useRef<UtilityLayerRenderer | null>(null);
   const gizmoManagerRef = useRef<GizmoManager | null>(null);
+  const supportMeshMapRef = useRef<Map<string, Mesh>>(new Map());
+
+  // 포인터 핸들러(한 번만 등록)가 최신 서포트 상태를 참조하도록 ref에 보관
+  const supportRtRef = useRef({ mode: supportMode, supports, onSupportsChange });
+  supportRtRef.current = { mode: supportMode, supports, onSupportsChange };
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,52 +100,80 @@ const STLViewer = forwardRef<STLViewerHandle, STLViewerProps>(({
   /**
    * 부모(ViewerPage)에서 호출하는 카메라 제어 메서드 노출
    */
-  useImperativeHandle(ref, () => ({
-    // 줌 인: 카메라 거리(radius)를 줄임 (lowerRadiusLimit까지)
-    zoomIn: () => {
-      const camera = cameraRef.current;
-      if (!camera) return;
-      const min = camera.lowerRadiusLimit ?? 5;
-      camera.radius = Math.max(min, camera.radius * 0.8);
-    },
-    // 줌 아웃: 카메라 거리(radius)를 늘림 (upperRadiusLimit까지)
-    zoomOut: () => {
-      const camera = cameraRef.current;
-      if (!camera) return;
-      const max = camera.upperRadiusLimit ?? 1000;
-      camera.radius = Math.min(max, camera.radius * 1.25);
-    },
-    // 위치 초기화: STL을 검정 중심점(원점) 기준 중앙 + 바닥면 위로 정렬
-    resetView: () => {
-      // 1) STL 메쉬 위치를 중앙(원점)으로 이동
-      meshMapRef.current.forEach((mesh, stlId) => {
-        mesh.position.x = 0;
-        mesh.position.z = 0;
-        mesh.computeWorldMatrix(true);
-        // 바닥면(Y=0) 위에 안착하도록 높이 보정
-        const minY = mesh.getBoundingInfo().boundingBox.minimumWorld.y;
-        mesh.position.y -= minY;
-        mesh.computeWorldMatrix(true);
-        // 변경된 위치를 React 상태에 동기화 (재적용 시 원위치로 되돌아가는 것 방지)
-        if (onGizmoTransformChange) {
-          onGizmoTransformChange(stlId, mesh);
-        }
-      });
+  useImperativeHandle(ref, () => {
+    return {
+      // 줌 인: 카메라 거리(radius)를 줄임 (lowerRadiusLimit까지)
+      zoomIn: () => {
+        const camera = cameraRef.current;
+        if (!camera) return;
+        const min = camera.lowerRadiusLimit ?? 5;
+        camera.radius = Math.max(min, camera.radius * 0.8);
+      },
+      // 줌 아웃: 카메라 거리(radius)를 늘림 (upperRadiusLimit까지)
+      zoomOut: () => {
+        const camera = cameraRef.current;
+        if (!camera) return;
+        const max = camera.upperRadiusLimit ?? 1000;
+        camera.radius = Math.min(max, camera.radius * 1.25);
+      },
+      // 초기화: 입력된 모든 STL의 회전을 0으로 되돌리고, 중앙 기준 5mm 간격으로
+      //          일렬 배열한 뒤 바닥면에 안착. 카메라(뷰어)는 그대로 둔다.
+      resetView: () => {
+        // 1) 회전 0 + 중앙 기준 5mm 간격 배열 (바닥면 안착 포함)
+        arrangeMeshesCentered(Array.from(meshMapRef.current.values()), 5);
+        // 2) 변경된 transform(회전 0 + 배열 위치)을 React 상태/DB에 동기화
+        meshMapRef.current.forEach((mesh, stlId) => {
+          if (onGizmoTransformChange) {
+            onGizmoTransformChange(stlId, mesh);
+          }
+        });
+      },
+      // HOME: STL 위치는 그대로 두고 뷰어를 상방에서 수직으로 내려다보는 탑뷰로 전환.
+      //       카메라 거리는 빌드스테이지 규격으로부터 계산한 '고정값'이므로
+      //       몇 번을 눌러도 줌이 변하지 않는다.
+      homeView: () => {
+        const camera = cameraRef.current;
+        if (!camera) return;
 
-      // 2) 카메라를 중앙(원점)으로 정렬
-      const camera = cameraRef.current;
-      if (!camera) return;
-      camera.alpha = Math.PI / 2;
-      camera.beta = Math.PI / 3;
-      camera.target.set(0, 0, 0);
-      let maxDiag = 0;
-      meshMapRef.current.forEach((mesh) => {
-        const bb = mesh.getBoundingInfo().boundingBox;
-        maxDiag = Math.max(maxDiag, bb.maximumWorld.subtract(bb.minimumWorld).length());
-      });
-      camera.radius = maxDiag > 0 ? Math.max(maxDiag * 1.8, 50) : 50;
-    },
-  }), [onGizmoTransformChange]);
+        // 상방에서 수직으로 내려다보는 탑뷰 + 전면(+Z, FRONT 마커)을 화면 하단에 배치
+        camera.alpha = Math.PI / 2;
+        camera.beta = 0.001; // 0에 근접(정확히 0이면 카메라 방향이 불안정)
+        camera.target.set(0, 0, 0);
+
+        // 빌드스테이지 규격(createGrid와 동일) + 양 끝 여유공간 2.5cm가 화면에
+        // 담기는 고정 거리 계산. 현재 radius에 의존하지 않아 반복 입력 시에도 불변.
+        const STAGE_X = 143.430; // 빌드스테이지 가로(mm)
+        const STAGE_Z = 89.6;    // 빌드스테이지 세로(mm)
+        const MARGIN = 25;       // 양 끝 여유 공간 2.5cm
+        const framedX = STAGE_X + MARGIN * 2;
+        const framedZ = STAGE_Z + MARGIN * 2;
+
+        const engine = camera.getEngine();
+        const aspect = engine.getRenderWidth() / engine.getRenderHeight();
+        const halfFovTan = Math.tan(camera.fov / 2); // fov = 수직 시야각(라디안)
+        // 세로(깊이)·가로 각각이 화면에 담기는 거리 중 더 먼 값을 채택
+        const radiusForDepth = framedZ / (2 * halfFovTan);
+        const radiusForWidth = framedX / (2 * halfFovTan * aspect);
+        camera.radius = Math.max(radiusForDepth, radiusForWidth);
+      },
+      // 자동 서포트 생성: 모델 오버행을 분석해 서포트 점 목록을 반환
+      generateSupports: (stlId, settings, platformOnly) => {
+        const scene = sceneRef.current;
+        const mesh = meshMapRef.current.get(stlId);
+        if (!scene || !mesh) return [];
+        return buildAutoSupports(
+          scene,
+          mesh,
+          stlId,
+          Array.from(meshMapRef.current.values()),
+          settings,
+          platformOnly
+        );
+      },
+      // 슬라이싱에 포함할 서포트 메쉬 목록
+      getSupportMeshes: () => Array.from(supportMeshMapRef.current.values()),
+    };
+  }, [onGizmoTransformChange]);
 
   /**
    * Babylon.js 초기화
@@ -146,18 +206,13 @@ const STLViewer = forwardRef<STLViewerHandle, STLViewerProps>(({
 
       // Gizmo 드래그 완료 이벤트 (Position)
       if (gizmoManager.gizmos.positionGizmo) {
-        console.log('[STLViewer] Position gizmo drag handler registered');
         gizmoManager.gizmos.positionGizmo.onDragEndObservable.add(() => {
-          console.log('[STLViewer] Position gizmo drag ended!');
           const attachedMesh = gizmoManager.gizmos.positionGizmo?.attachedMesh;
-          console.log('[STLViewer] Attached mesh:', attachedMesh);
-          console.log('[STLViewer] onGizmoTransformChange:', onGizmoTransformChange);
 
           if (attachedMesh && onGizmoTransformChange) {
             // 메쉬에서 stlId 찾기
             for (const [stlId, mesh] of meshMapRef.current.entries()) {
               if (mesh === attachedMesh) {
-                console.log('[STLViewer] Calling onGizmoTransformChange for:', stlId);
                 onGizmoTransformChange(stlId, mesh);
                 break;
               }
@@ -168,15 +223,16 @@ const STLViewer = forwardRef<STLViewerHandle, STLViewerProps>(({
 
       // Gizmo 드래그 완료 이벤트 (Rotation)
       if (gizmoManager.gizmos.rotationGizmo) {
-        console.log('[STLViewer] Rotation gizmo drag handler registered');
         gizmoManager.gizmos.rotationGizmo.onDragEndObservable.add(() => {
-          console.log('[STLViewer] Rotation gizmo drag ended!');
           const attachedMesh = gizmoManager.gizmos.rotationGizmo?.attachedMesh;
 
           if (attachedMesh && onGizmoTransformChange) {
             for (const [stlId, mesh] of meshMapRef.current.entries()) {
               if (mesh === attachedMesh) {
-                console.log('[STLViewer] Calling onGizmoTransformChange for:', stlId);
+                // 회전으로 바닥면을 침투했으면 위로 안착 (Z 높이를 음수로 둔 경우는 제외)
+                if (getTransformFromMesh(mesh).translation.z >= 0) {
+                  clampMeshAboveFloor(mesh);
+                }
                 onGizmoTransformChange(stlId, mesh);
                 break;
               }
@@ -196,30 +252,61 @@ const STLViewer = forwardRef<STLViewerHandle, STLViewerProps>(({
 
       // 메쉬 클릭 이벤트
       scene.onPointerObservable.add((pointerInfo) => {
-        if (pointerInfo.type === 2) { // PointerEventTypes.POINTERDOWN
-          if (pointerInfo.pickInfo?.hit && pointerInfo.pickInfo.pickedMesh) {
-            // 메쉬 클릭 (왼쪽 클릭만 허용)
-            const event = pointerInfo.event as IPointerEvent;
-            if (event.button === 0) {
-              const pickedMesh = pointerInfo.pickInfo.pickedMesh;
-              if (onMeshSelected) {
-                // STL ID 찾기
-                for (const [stlId, mesh] of meshMapRef.current.entries()) {
-                  if (mesh === pickedMesh) {
-                    onMeshSelected(stlId);
-                    break;
-                  }
-                }
-              }
+        if (pointerInfo.type !== 2) return; // PointerEventTypes.POINTERDOWN
+        const event = pointerInfo.event as IPointerEvent;
+        if (event.button !== 0) return; // 왼쪽 클릭만 허용
+
+        const pick = pointerInfo.pickInfo;
+        const rt = supportRtRef.current;
+
+        // 서포트 추가 모드 — 모델 표면을 클릭해 서포트 직접 추가
+        if (rt.mode === 'add') {
+          if (pick?.hit && pick.pickedMesh && pick.pickedPoint) {
+            let ownerId: string | null = null;
+            for (const [id, mesh] of meshMapRef.current.entries()) {
+              if (mesh === pick.pickedMesh) { ownerId = id; break; }
             }
-          } else {
-            // 배경 클릭 (왼쪽 클릭인 경우만)
-            // pointerInfo.event.button === 0 (Left Click)
-            const event = pointerInfo.event as IPointerEvent;
-            if (event.button === 0 && onBackgroundClick) {
-              onBackgroundClick();
+            if (ownerId) {
+              const cp = pick.pickedPoint;
+              const models = Array.from(meshMapRef.current.values());
+              const hit = raycastDown(scene, new Vector3(cp.x, cp.y - 0.5, cp.z), models);
+              const base = hit && hit.y < cp.y - 0.2 && hit.y > 0.05
+                ? { x: hit.x, y: hit.y, z: hit.z }
+                : { x: cp.x, y: 0, z: cp.z };
+              const newSupport: SupportPoint = {
+                id: crypto.randomUUID(),
+                stlId: ownerId,
+                contact: { x: cp.x, y: cp.y, z: cp.z },
+                base,
+              };
+              rt.onSupportsChange?.([...rt.supports, newSupport]);
             }
           }
+          return;
+        }
+
+        // 서포트 삭제 모드 — 서포트를 클릭해 개별 삭제
+        if (rt.mode === 'delete') {
+          const sid = pick?.pickedMesh?.metadata?.supportId as string | undefined;
+          if (sid) {
+            rt.onSupportsChange?.(rt.supports.filter((s) => s.id !== sid));
+          }
+          return;
+        }
+
+        // 일반 모드 — 모델 선택 / 배경 클릭 해제
+        if (pick?.hit && pick.pickedMesh) {
+          const pickedMesh = pick.pickedMesh;
+          if (onMeshSelected) {
+            for (const [stlId, mesh] of meshMapRef.current.entries()) {
+              if (mesh === pickedMesh) {
+                onMeshSelected(stlId);
+                break;
+              }
+            }
+          }
+        } else if (onBackgroundClick) {
+          onBackgroundClick();
         }
       });
     } catch (err) {
@@ -279,9 +366,15 @@ const STLViewer = forwardRef<STLViewerHandle, STLViewerProps>(({
 
             // Transform 적용 (Preview 우선)
             const transformToApply = stlFile.previewTransform || stlFile.currentTransform;
-            console.log(`[STLViewer] Applying transform to ${stlFile.fileName}:`, transformToApply);
             applyTransform(mesh, transformToApply);
-            console.log(`[STLViewer] Mesh position after transform:`, mesh.position);
+
+            // STL이 처음 입력된 경우(위치 미조정 상태) 빌드스테이지 정중앙 + 바닥면에 배치
+            const tr = stlFile.currentTransform.translation;
+            const isFreshImport =
+              Math.abs(tr.x) < 0.0001 && Math.abs(tr.y) < 0.0001 && Math.abs(tr.z) < 0.0001;
+            if (isFreshImport) {
+              centerMeshOnFloor(mesh);
+            }
 
             // 가시성 설정
             setMeshVisibility(mesh, stlFile.visibility);
@@ -298,6 +391,11 @@ const STLViewer = forwardRef<STLViewerHandle, STLViewerProps>(({
                   onGizmoTransformChange(stlId, mesh);
                 }
               });
+            }
+
+            // 처음 입력된 STL은 중앙 정렬된 위치를 상태에 동기화 (재적용 시 원위치 방지)
+            if (isFreshImport && onGizmoTransformChange) {
+              onGizmoTransformChange(stlFile.stlId, mesh);
             }
 
             // 콜백 호출 (Check disposed again)
@@ -341,7 +439,13 @@ const STLViewer = forwardRef<STLViewerHandle, STLViewerProps>(({
       const mesh = meshMapRef.current.get(stlFile.stlId);
       if (mesh) {
         // Preview transform이 있으면 우선 사용, 없으면 current transform 사용
-        applyTransform(mesh, stlFile.previewTransform || stlFile.currentTransform);
+        const transform = stlFile.previewTransform || stlFile.currentTransform;
+        applyTransform(mesh, transform);
+        // 사용자가 Z(높이) 축에 음수 값을 입력하지 않은 한, 일반 이동·회전으로 인한
+        // 바닥면 침투를 차단 (음수 Z 입력 시에는 의도된 침투로 보고 허용)
+        if (transform.translation.z >= 0) {
+          clampMeshAboveFloor(mesh);
+        }
       }
     });
   }, [stlFiles]); // Update transforms when any transform changes
@@ -409,6 +513,30 @@ const STLViewer = forwardRef<STLViewerHandle, STLViewerProps>(({
     });
 
   }, [selectedFileIds, unselectedOpacity]);
+
+  /**
+   * 서포트 메쉬 동기화
+   * supports/설정이 바뀌면 기존 서포트 메쉬를 모두 제거하고 다시 생성한다.
+   */
+  useEffect(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+
+    // 기존 서포트 메쉬 제거
+    supportMeshMapRef.current.forEach((mesh) => mesh.dispose());
+    supportMeshMapRef.current.clear();
+
+    if (!supportSettings) return;
+
+    const material = getSupportMaterial(scene);
+    for (const sp of supports) {
+      const mesh = buildSupportMesh(scene, sp, supportSettings, material);
+      if (mesh) {
+        mesh.isVisible = supportsVisible;
+        supportMeshMapRef.current.set(sp.id, mesh);
+      }
+    }
+  }, [supports, supportSettings, supportsVisible]);
 
   return (
     <div className={`relative w-full h-full ${className}`}>
