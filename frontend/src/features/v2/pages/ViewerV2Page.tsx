@@ -1,26 +1,26 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useParams, useNavigate, Navigate } from "react-router-dom";
 
 import { useProjectV2 } from "../hooks/useProjectsV2";
 import { SupportParamsPanel, useSupportParamsStore } from "../support";
 import BabylonScene from "../components/BabylonScene";
+import LocalFileBrowser from "../components/LocalFileBrowser";
 
 /**
  * v2 프로젝트 작업 화면.
  *
- * 옛 ViewerPage 와 무관. 첫 패스: 헤더, STL 업로드, BabylonScene,
- * 우측 SupportParamsPanel.
- *
- * STL Blob 영속화 (IndexedDB 저장) 는 다음 commit. 지금은 메모리만.
+ * 파일 입력은 백엔드 /api/fs · /api/fs/read 를 경유하는 자기완결
+ * LocalFileBrowser 로 받는다 (브라우저 표준 file picker 는 회사
+ * 보안프로그램에 차단되는 환경 대응).
  */
 const ViewerV2Page: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const { project, loading, error } = useProjectV2(projectId);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [stlBlob, setStlBlob] = useState<Blob | null>(null);
   const [stlName, setStlName] = useState<string | null>(null);
+  const [browserOpen, setBrowserOpen] = useState(false);
 
   const overhangAngleDeg = useSupportParamsStore(
     (s) => s.params.overhangAngleDeg,
@@ -30,21 +30,15 @@ const ViewerV2Page: React.FC = () => {
     return <Navigate to="/v2/projects" replace />;
   }
 
-  function handlePickFile() {
-    fileInputRef.current?.click();
-  }
-
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setStlBlob(file);
-    setStlName(file.name);
-    e.target.value = ""; // 같은 파일 재선택 가능하게
-  }
-
   function handleClear() {
     setStlBlob(null);
     setStlName(null);
+  }
+
+  function handlePicked(file: { name: string; blob: Blob }) {
+    setStlBlob(file.blob);
+    setStlName(file.name);
+    setBrowserOpen(false);
   }
 
   return (
@@ -83,18 +77,11 @@ const ViewerV2Page: React.FC = () => {
               </button>
             )}
             <button
-              onClick={handlePickFile}
+              onClick={() => setBrowserOpen(true)}
               className="px-3 py-1 text-sm bg-primary-600 text-white rounded hover:bg-primary-700 transition-colors"
             >
               {stlBlob ? "STL 변경" : "STL 불러오기"}
             </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".stl"
-              onChange={handleFileChange}
-              className="hidden"
-            />
           </div>
         </div>
       </header>
@@ -145,6 +132,13 @@ const ViewerV2Page: React.FC = () => {
           <SupportParamsPanel />
         </aside>
       </div>
+
+      {browserOpen && (
+        <LocalFileBrowser
+          onSelect={handlePicked}
+          onClose={() => setBrowserOpen(false)}
+        />
+      )}
     </div>
   );
 };

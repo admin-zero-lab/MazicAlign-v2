@@ -104,4 +104,38 @@ router.get('/', (req: Request, res: Response) => {
   }
 });
 
+/**
+ * GET /api/fs/read?path=...
+ * 로컬 STL 파일을 raw bytes 로 반환.
+ *
+ * v2 (브라우저 file picker 가 보안프로그램에 걸리는 환경) 에서
+ * 사용. .stl 확장자만 허용한다.
+ */
+router.get('/read', (req: Request, res: Response) => {
+  const requestedPath = (req.query.path as string) || '';
+  if (!requestedPath) {
+    return res.status(400).json({ success: false, error: 'path is required' });
+  }
+  if (!requestedPath.toLowerCase().endsWith('.stl')) {
+    return res.status(400).json({ success: false, error: 'only .stl files are allowed' });
+  }
+
+  try {
+    const stat = fs.statSync(requestedPath);
+    if (!stat.isFile()) {
+      return res.status(400).json({ success: false, error: 'not a file' });
+    }
+    const data = fs.readFileSync(requestedPath);
+    res.setHeader('Content-Type', 'model/stl');
+    res.setHeader('Content-Length', String(data.length));
+    res.setHeader('X-File-Name', encodeURIComponent(path.basename(requestedPath)));
+    return res.send(data);
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      error: `Cannot read file: ${(error as Error).message}`,
+    });
+  }
+});
+
 export default router;
