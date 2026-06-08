@@ -7,17 +7,17 @@
  */
 
 export const DB_NAME = "resinforge";
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 
 export const STORE_PROJECTS = "projects";
+export const STORE_STL_FILES = "stl_files";
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
 /**
  * DB 핸들을 한 번만 연다. 후속 호출은 같은 Promise 를 재사용.
  *
- * onupgradeneeded 에서 스키마를 만들고, 이후 DB_VERSION 을 올릴 때
- * 마이그레이션도 여기서 처리한다.
+ * onupgradeneeded 에서 스키마를 만들고 oldVersion 별로 마이그레이션.
  */
 export function openDb(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
@@ -25,16 +25,25 @@ export function openDb(): Promise<IDBDatabase> {
   dbPromise = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
 
-    req.onupgradeneeded = () => {
+    req.onupgradeneeded = (event) => {
       const db = req.result;
+      const oldVersion = event.oldVersion;
 
-      if (!db.objectStoreNames.contains(STORE_PROJECTS)) {
+      // v0 → v1: projects 스토어
+      if (oldVersion < 1) {
         const store = db.createObjectStore(STORE_PROJECTS, { keyPath: "id" });
         store.createIndex("by_lastModifiedAt", "lastModifiedAt");
         store.createIndex("by_code", "code", { unique: true });
       }
 
-      // 향후 stl_files, supports 스토어가 추가되면 여기서 분기.
+      // v1 → v2: stl_files 스토어
+      if (oldVersion < 2) {
+        const stlStore = db.createObjectStore(STORE_STL_FILES, {
+          keyPath: "id",
+        });
+        stlStore.createIndex("by_project", "projectId");
+        stlStore.createIndex("by_addedAt", "addedAt");
+      }
     };
 
     req.onerror = () => reject(req.error);
@@ -69,7 +78,6 @@ export async function withStore<T>(
           };
           req.onerror = () => reject(req.error);
         } else {
-          // fn 이 이미 resolved 된 값을 돌려준 경우
           result = req as T;
           resolved = true;
         }
@@ -81,19 +89,19 @@ export async function withStore<T>(
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error ?? new Error("transaction aborted"));
 
-    // resolved 가 즉시 true 면 트랜잭션 commit 을 기다린 뒤 oncomplete 가 발화.
     void resolved;
   });
 }
 
 /**
- * 테스트·디버그용. 운영 코드에서는 호출하지 않는다.
+ * 테스트·디버그용.
  */
 export async function _wipeAll(): Promise<void> {
   const db = await openDb();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction([STORE_PROJECTS], "readwrite");
+    const tx = db.transaction([STORE_PROJECTS, STORE_STL_FILES], "readwrite");
     tx.objectStore(STORE_PROJECTS).clear();
+    tx.objectStore(STORE_STL_FILES).clear();
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });

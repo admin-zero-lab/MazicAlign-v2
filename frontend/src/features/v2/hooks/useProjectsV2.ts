@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import * as repo from "../data/projects.repo";
+import * as stlRepo from "../data/stl-files.repo";
 import type { ProjectV2, ProjectV2CreateInput } from "../types/project";
 
 /**
@@ -40,6 +41,8 @@ export function useProjectsV2() {
 
   const remove = useCallback(
     async (id: string) => {
+      // STL 파일 cascade — 프로젝트 삭제 시 같이 지운다.
+      await stlRepo.deleteStlFilesByProject(id);
       await repo.deleteProject(id);
       await refresh();
     },

@@ -3,6 +3,7 @@
 
 export * from "./support";
 export { useProjectsV2, useProjectV2 } from "./hooks/useProjectsV2";
+export { useStlFilesV2 } from "./hooks/useStlFilesV2";
 export {
   useShortcutsListener,
   useShortcutHandler,
@@ -12,6 +13,7 @@ export type {
   ProjectV2,
   ProjectV2CreateInput,
 } from "./types/project";
+export type { STLFileV2 } from "./types/stl";
 
 export { default as ProjectsV2Page } from "./pages/ProjectsV2Page";
 export { default as ViewerV2Page } from "./pages/ViewerV2Page";

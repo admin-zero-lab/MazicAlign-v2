@@ -23,28 +23,32 @@ import {
 } from "../utils/scene-setup";
 import {
   applyViewPreset,
-  frameCameraToMesh,
+  frameCameraToMeshes,
   resetCameraOnPlate,
   type ViewPreset,
 } from "../utils/camera-views";
+import type { STLFileV2 } from "../types/stl";
 
 const PLATE_WIDTH_MM = 200;
 const PLATE_DEPTH_MM = 125;
 
 interface BabylonSceneProps {
-  /** 현재 로드된 STL Blob. null 이면 빈 씬. */
-  stlBlob: Blob | null;
+  /** 프로젝트의 STL 파일 목록. 추가·삭제 시 자동 동기화. */
+  files: STLFileV2[];
   /** 오버행 임계각 (deg). */
   overhangAngleDeg: number;
   className?: string;
 }
 
 /**
- * v2 의 자기완결 Babylon 씬.
+ * v2 의 자기완결 Babylon 씬 (다중 메쉬).
  *
- * 외부에서 사용할 수 있는 명령:
- *   - setView('home'|'top'|'front'|'back'|'left'|'right'|'iso')
- *   - fit()                — 현재 메쉬 또는 빌드플레이트에 카메라 맞춤
+ * files 배열을 watch 해서:
+ *   - 새로 들어온 file → STL 로드 + 색 적용
+ *   - 사라진 file       → mesh dispose
+ * overhangAngleDeg 변경 시 등록된 모든 mesh 의 색만 재할당.
+ *
+ * 외부 명령: setView, fit
  */
 export interface BabylonSceneHandle {
   setView: (preset: ViewPreset) => void;
@@ -52,13 +56,16 @@ export interface BabylonSceneHandle {
 }
 
 const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
-  function BabylonScene({ stlBlob, overhangAngleDeg, className = "" }, ref) {
+  function BabylonScene({ files, overhangAngleDeg, className = "" }, ref) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const engineRef = useRef<Engine | null>(null);
     const sceneRef = useRef<Scene | null>(null);
     const cameraRef = useRef<ArcRotateCamera | null>(null);
-    const meshRef = useRef<Mesh | null>(null);
+    const meshMapRef = useRef<Map<string, Mesh>>(new Map());
     const furnitureRef = useRef<SceneFurniture | null>(null);
+    const overhangRef = useRef<number>(overhangAngleDeg);
+
+    overhangRef.current = overhangAngleDeg;
 
     // 1) 씬 부트스트랩
     useEffect(() => {
@@ -83,7 +90,6 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       camera.attachControl(canvas, true);
       camera.wheelPrecision = 30;
       camera.minZ = 0.1;
-      // 좌클릭=회전, 우클릭=패닝 (표준)
       camera.panningSensibility = 50;
       camera.inertia = 0.7;
 
@@ -103,7 +109,6 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       );
       lightBottom.intensity = 0.25;
 
-      // 빌드플레이트 + 그리드 + 좌표축
       furnitureRef.current = addBuildPlateAndGrid(scene, {
         widthMm: PLATE_WIDTH_MM,
         depthMm: PLATE_DEPTH_MM,
@@ -122,8 +127,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
 
       return () => {
         window.removeEventListener("resize", onResize);
-        meshRef.current?.dispose();
-        meshRef.current = null;
+        for (const mesh of meshMapRef.current.values()) {
+          mesh.dispose();
+        }
+        meshMapRef.current.clear();
         furnitureRef.current?.dispose();
         furnitureRef.current = null;
         scene.dispose();
@@ -134,7 +141,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       };
     }, []);
 
-    // 2) STL Blob 변경
+    // 2) files 변경 시 메쉬 동기화
     useEffect(() => {
       const scene = sceneRef.current;
       const camera = cameraRef.current;
@@ -142,40 +149,58 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
 
       let cancelled = false;
 
-      meshRef.current?.dispose();
-      meshRef.current = null;
+      const currentIds = new Set(meshMapRef.current.keys());
+      const nextIds = new Set(files.map((f) => f.id));
 
-      if (!stlBlob) {
-        resetCameraOnPlate(camera, PLATE_WIDTH_MM, PLATE_DEPTH_MM);
-        return;
+      // 사라진 파일: dispose
+      for (const id of currentIds) {
+        if (!nextIds.has(id)) {
+          meshMapRef.current.get(id)?.dispose();
+          meshMapRef.current.delete(id);
+        }
       }
 
-      (async () => {
-        try {
-          const mesh = await loadStlIntoScene(scene, stlBlob, "model");
-          if (cancelled) {
-            mesh.dispose();
-            return;
+      // 신규 파일: load
+      const newFiles = files.filter((f) => !currentIds.has(f.id));
+      const wasEmpty = currentIds.size === 0;
+
+      Promise.all(
+        newFiles.map(async (f) => {
+          try {
+            const mesh = await loadStlIntoScene(scene, f.blob, f.fileName);
+            if (cancelled) {
+              mesh.dispose();
+              return null;
+            }
+            applyOverhangColors(mesh, overhangRef.current);
+            meshMapRef.current.set(f.id, mesh);
+            return mesh;
+          } catch (e) {
+            console.error("[v2] STL 로드 실패", f.fileName, e);
+            return null;
           }
-          applyOverhangColors(mesh, overhangAngleDeg);
-          meshRef.current = mesh;
-          frameCameraToMesh(camera, mesh);
-        } catch (e) {
-          console.error("[v2] STL 로드 실패", e);
+        }),
+      ).then((loaded) => {
+        if (cancelled) return;
+        // 메쉬가 비어있었다가 처음 들어왔다면 카메라 fit
+        if (wasEmpty && loaded.some((m) => m !== null)) {
+          frameCameraToMeshes(
+            camera,
+            loaded.filter((m): m is Mesh => m !== null),
+          );
         }
-      })();
+      });
 
       return () => {
         cancelled = true;
       };
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [stlBlob]);
+    }, [files]);
 
-    // 3) 임계각만 변경
+    // 3) 임계각 변경 시 모든 메쉬 색 재할당
     useEffect(() => {
-      const mesh = meshRef.current;
-      if (!mesh) return;
-      applyOverhangColors(mesh, overhangAngleDeg);
+      for (const mesh of meshMapRef.current.values()) {
+        applyOverhangColors(mesh, overhangAngleDeg);
+      }
     }, [overhangAngleDeg]);
 
     // 4) 외부 ref API
@@ -190,8 +215,9 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         fit() {
           const camera = cameraRef.current;
           if (!camera) return;
-          if (meshRef.current) {
-            frameCameraToMesh(camera, meshRef.current);
+          const meshes = Array.from(meshMapRef.current.values());
+          if (meshes.length > 0) {
+            frameCameraToMeshes(camera, meshes);
           } else {
             resetCameraOnPlate(camera, PLATE_WIDTH_MM, PLATE_DEPTH_MM);
           }

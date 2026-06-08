@@ -77,17 +77,36 @@ export function frameCameraToMesh(
   camera: ArcRotateCamera,
   mesh: Mesh,
 ): void {
-  mesh.computeWorldMatrix(true);
-  const bb = mesh.getBoundingInfo().boundingBox;
-  const min = bb.minimumWorld;
-  const max = bb.maximumWorld;
+  frameCameraToMeshes(camera, [mesh]);
+}
+
+/**
+ * 여러 메쉬의 합산 AABB 에 카메라를 맞춘다. 비어 있으면 무동작.
+ */
+export function frameCameraToMeshes(
+  camera: ArcRotateCamera,
+  meshes: Mesh[],
+): void {
+  if (meshes.length === 0) return;
+
+  let min: Vector3 | null = null;
+  let max: Vector3 | null = null;
+
+  for (const mesh of meshes) {
+    mesh.computeWorldMatrix(true);
+    const bb = mesh.getBoundingInfo().boundingBox;
+    min = min ? Vector3.Minimize(min, bb.minimumWorld) : bb.minimumWorld.clone();
+    max = max ? Vector3.Maximize(max, bb.maximumWorld) : bb.maximumWorld.clone();
+  }
+
+  if (!min || !max) return;
 
   const center = Vector3.Center(min, max);
   const diag = max.subtract(min).length();
 
   camera.target.copyFrom(center);
-  camera.radius = diag * 1.8;
-  camera.lowerRadiusLimit = diag * 0.3;
-  camera.upperRadiusLimit = diag * 6;
+  camera.radius = Math.max(diag * 1.8, 1);
+  camera.lowerRadiusLimit = Math.max(diag * 0.3, 0.5);
+  camera.upperRadiusLimit = Math.max(diag * 6, 10);
   applyViewPreset(camera, "iso");
 }
