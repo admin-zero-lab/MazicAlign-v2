@@ -12,11 +12,13 @@ import { useUndoStore } from "../hooks/useUndoStore";
 import { SupportParamsPanel, useSupportParamsStore } from "../support";
 import BabylonScene, {
   type BabylonSceneHandle,
+  type GizmoMode,
 } from "../components/BabylonScene";
 import LocalFileBrowser from "../components/LocalFileBrowser";
 import ViewControls from "../components/ViewControls";
 import StlFileList from "../components/StlFileList";
 import TransformPanel from "../components/TransformPanel";
+import GizmoControls from "../components/GizmoControls";
 import { IDENTITY_TRANSFORM, type TransformV2 } from "../types/transform";
 
 /**
@@ -39,6 +41,7 @@ const ViewerV2Page: React.FC = () => {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  const [gizmoMode, setGizmoMode] = useState<GizmoMode>("none");
   const sceneHandleRef = useRef<BabylonSceneHandle>(null);
 
   const overhangAngleDeg = useSupportParamsStore(
@@ -227,11 +230,19 @@ const ViewerV2Page: React.FC = () => {
             selectedIds={selectedIds}
             onPick={handlePick}
             overhangAngleDeg={overhangAngleDeg}
+            gizmoMode={gizmoMode}
+            onGizmoCommit={handleCommitTransform}
           />
 
           <ViewControls
             onSetView={(p) => sceneHandleRef.current?.setView(p)}
             onFit={() => sceneHandleRef.current?.fit()}
+          />
+
+          <GizmoControls
+            mode={gizmoMode}
+            onChange={setGizmoMode}
+            enabled={selectedIds.size === 1}
           />
 
           {files.length > 0 ? (
@@ -252,8 +263,10 @@ const ViewerV2Page: React.FC = () => {
               </div>
             </div>
           ) : (
-            <div className="absolute top-3 left-3 bg-white/90 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-600 pointer-events-none">
-              좌측 '+ 추가' 또는 상단 'STL 불러오기' 로 파일을 가져오세요.
+            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex justify-center pointer-events-none">
+              <div className="bg-white/90 backdrop-blur rounded-md shadow px-4 py-3 text-sm text-gray-600">
+                좌측 '+ 추가' 또는 상단 'STL 불러오기' 로 파일을 가져오세요.
+              </div>
             </div>
           )}
 

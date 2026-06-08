@@ -9,6 +9,7 @@ import {
   Color3,
   Color4,
   Engine,
+  GizmoManager,
   HemisphericLight,
   HighlightLayer,
   Mesh,
@@ -19,8 +20,10 @@ import {
 
 import { loadStlIntoScene } from "../utils/stl-loader";
 import { applyOverhangColors } from "../utils/overhang";
-import { applyTransformToMesh } from "../utils/transform";
+import { applyTransformToMesh, readMeshTransform } from "../utils/transform";
 import { IDENTITY_TRANSFORM, type TransformV2 } from "../types/transform";
+
+export type GizmoMode = "none" | "translate" | "rotate" | "scale";
 import {
   addBuildPlateAndGrid,
   type SceneFurniture,
@@ -50,6 +53,10 @@ interface BabylonSceneProps {
   onPick: (id: string | null, opts: { multi: boolean }) => void;
   /** 오버행 임계각 (deg). */
   overhangAngleDeg: number;
+  /** Gizmo 모드. 단일 선택일 때만 활성. 'none' 이면 비활성. */
+  gizmoMode: GizmoMode;
+  /** Gizmo 드래그가 끝났을 때 commit. (start, end) 가 다르면 DB+undo. */
+  onGizmoCommit: (id: string, start: TransformV2, end: TransformV2) => void;
   className?: string;
 }
 
@@ -65,7 +72,15 @@ export interface BabylonSceneHandle {
 
 const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
   function BabylonScene(
-    { files, selectedIds, onPick, overhangAngleDeg, className = "" },
+    {
+      files,
+      selectedIds,
+      onPick,
+      overhangAngleDeg,
+      gizmoMode,
+      onGizmoCommit,
+      className = "",
+    },
     ref,
   ) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -75,6 +90,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     const meshMapRef = useRef<Map<string, Mesh>>(new Map());
     const furnitureRef = useRef<SceneFurniture | null>(null);
     const highlightRef = useRef<HighlightLayer | null>(null);
+    const gizmoManagerRef = useRef<GizmoManager | null>(null);
+    const gizmoDragStartRef = useRef<{ id: string; t: TransformV2 } | null>(
+      null,
+    );
 
     // 최신 값을 effect 바깥에서 참조할 수 있게 ref 로 동기화.
     const overhangRef = useRef<number>(overhangAngleDeg);
@@ -83,6 +102,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     selectedRef.current = selectedIds;
     const onPickRef = useRef(onPick);
     onPickRef.current = onPick;
+    const onGizmoCommitRef = useRef(onGizmoCommit);
+    onGizmoCommitRef.current = onGizmoCommit;
 
     function refreshHighlight() {
       const hl = highlightRef.current;
@@ -149,6 +170,43 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       hl.outerGlow = true;
       highlightRef.current = hl;
 
+      // Gizmo: 처음에 모든 종류를 enable→disable 로 한 번 인스턴스화
+      // 해두면 이후 모드 전환이 가볍다. 콜백 등록도 이때 한 번에.
+      const gm = new GizmoManager(scene);
+      gm.usePointerToAttachGizmos = false; // 직접 attachToMesh 로만 제어
+      gm.positionGizmoEnabled = true;
+      gm.rotationGizmoEnabled = true;
+      gm.scaleGizmoEnabled = true;
+      gm.positionGizmoEnabled = false;
+      gm.rotationGizmoEnabled = false;
+      gm.scaleGizmoEnabled = false;
+
+      const onDragStart = () => {
+        const sel = Array.from(selectedRef.current);
+        if (sel.length !== 1) return;
+        const id = sel[0];
+        const mesh = meshMapRef.current.get(id);
+        if (!mesh) return;
+        gizmoDragStartRef.current = { id, t: readMeshTransform(mesh) };
+      };
+      const onDragEnd = () => {
+        const started = gizmoDragStartRef.current;
+        gizmoDragStartRef.current = null;
+        if (!started) return;
+        const mesh = meshMapRef.current.get(started.id);
+        if (!mesh) return;
+        const end = readMeshTransform(mesh);
+        onGizmoCommitRef.current(started.id, started.t, end);
+      };
+      [gm.gizmos.positionGizmo, gm.gizmos.rotationGizmo, gm.gizmos.scaleGizmo]
+        .forEach((giz) => {
+          if (!giz) return;
+          giz.onDragStartObservable.add(onDragStart);
+          giz.onDragEndObservable.add(onDragEnd);
+        });
+
+      gizmoManagerRef.current = gm;
+
       // 클릭 픽업: 좌클릭으로 단순 클릭 (드래그 없는) 시 mesh 픽.
       // 메쉬 위면 선택, 빈 공간이면 선택 해제.
       scene.onPointerObservable.add((info) => {
@@ -184,6 +242,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
 
       return () => {
         window.removeEventListener("resize", onResize);
+        gizmoManagerRef.current?.dispose();
+        gizmoManagerRef.current = null;
         for (const mesh of meshMapRef.current.values()) {
           mesh.dispose();
         }
@@ -277,6 +337,24 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       refreshHighlight();
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedIds]);
+
+    // 5) Gizmo: 단일 선택 + 모드 ≠ none 일 때만 attach + 해당 gizmo enable
+    useEffect(() => {
+      const gm = gizmoManagerRef.current;
+      if (!gm) return;
+
+      const single =
+        selectedIds.size === 1 ? Array.from(selectedIds)[0] : null;
+      const mesh = single ? meshMapRef.current.get(single) ?? null : null;
+
+      const wantGizmo = mesh !== null && gizmoMode !== "none";
+
+      gm.positionGizmoEnabled = wantGizmo && gizmoMode === "translate";
+      gm.rotationGizmoEnabled = wantGizmo && gizmoMode === "rotate";
+      gm.scaleGizmoEnabled = wantGizmo && gizmoMode === "scale";
+
+      gm.attachToMesh(wantGizmo ? mesh : null);
+    }, [selectedIds, gizmoMode, files]);
 
     // 5) 외부 ref API
     useImperativeHandle(
