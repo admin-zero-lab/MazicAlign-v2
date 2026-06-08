@@ -1,13 +1,13 @@
-// support-v2 전용 타입.
-// 옛 support.types.ts 와 무관하게 다시 정의한다.
+// v2 서포트 모듈 전용 타입.
+// 옛 support.types.ts 와 무관.
 
 /**
  * 서포트 파라미터.
  *
- * 첫 패스 (D 단계)에서 필요한 최소 집합. 자동 생성 / 수동 편집
- * 단계가 들어오면 그때 필드를 추가한다.
+ * 첫 패스 (파라미터 패널) 에서 필요한 최소 집합.
+ * 자동 생성·수동 편집 단계가 들어오면 그때 필드를 추가한다.
  */
-export interface SupportV2Params {
+export interface SupportParams {
   /** 오버행 판정 임계각 (deg). 면 법선이 -Z 와 이루는 각이 이 값
    *  이상이면 오버행으로 본다. 통상 35~55°. */
   overhangAngleDeg: number;
@@ -32,5 +32,4 @@ export interface SupportV2Params {
   autoSizeTrunk: boolean;
 }
 
-/** SupportV2Params 의 한 키만 부분 갱신할 때 쓰는 타입 헬퍼. */
-export type SupportV2ParamKey = keyof SupportV2Params;
+export type SupportParamKey = keyof SupportParams;

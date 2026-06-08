@@ -1,33 +1,33 @@
-import { useSupportV2ParamsStore } from "../hooks/useSupportV2ParamsStore";
+import { useSupportParamsStore } from "../hooks/useSupportParamsStore";
 import {
-  SUPPORT_V2_PARAM_LIMITS,
-  DEFAULT_SUPPORT_V2_PARAMS,
+  SUPPORT_PARAM_LIMITS,
+  DEFAULT_SUPPORT_PARAMS,
 } from "../utils/defaults";
-import type { SupportV2Params } from "../types";
 
-interface SupportV2PanelProps {
+interface SupportParamsPanelProps {
   className?: string;
 }
 
 /**
- * 서포트 v2 파라미터 패널.
+ * 서포트 파라미터 패널.
  *
- * 옛 SupportPanel 과 무관하게 처음부터 다시 짠 컴포넌트. 모든 값은
- * useSupportV2ParamsStore 에서 읽고 쓴다. 다른 v2 모듈
- * (오버행 시각화 / 자동 생성 / 수동 편집) 도 같은 스토어를 본다.
+ * 모든 값은 useSupportParamsStore 에서 읽고 쓴다. 오버행 시각화 /
+ * 자동 생성 / 수동 편집도 같은 스토어를 본다.
  */
-const SupportV2Panel: React.FC<SupportV2PanelProps> = ({ className = "" }) => {
-  const params = useSupportV2ParamsStore((s) => s.params);
-  const setParam = useSupportV2ParamsStore((s) => s.setParam);
-  const reset = useSupportV2ParamsStore((s) => s.reset);
+const SupportParamsPanel: React.FC<SupportParamsPanelProps> = ({
+  className = "",
+}) => {
+  const params = useSupportParamsStore((s) => s.params);
+  const setParam = useSupportParamsStore((s) => s.setParam);
+  const reset = useSupportParamsStore((s) => s.reset);
 
   const isAtDefault =
-    JSON.stringify(params) === JSON.stringify(DEFAULT_SUPPORT_V2_PARAMS);
+    JSON.stringify(params) === JSON.stringify(DEFAULT_SUPPORT_PARAMS);
 
   return (
     <div className={`p-4 bg-white rounded-lg shadow ${className}`}>
       <div className="flex justify-between items-center mb-4">
-        <h3 className="text-lg font-semibold text-gray-900">Support v2</h3>
+        <h3 className="text-lg font-semibold text-gray-900">Support</h3>
         <button
           onClick={reset}
           disabled={isAtDefault}
@@ -39,13 +39,13 @@ const SupportV2Panel: React.FC<SupportV2PanelProps> = ({ className = "" }) => {
 
       <div className="mb-4 flex items-center justify-between">
         <label
-          htmlFor="support-v2-auto-trunk"
+          htmlFor="support-auto-trunk"
           className="text-sm font-medium text-gray-700 cursor-pointer"
         >
           기둥 굵기 자동 조정
         </label>
         <input
-          id="support-v2-auto-trunk"
+          id="support-auto-trunk"
           type="checkbox"
           checked={params.autoSizeTrunk}
           onChange={(e) => setParam("autoSizeTrunk", e.target.checked)}
@@ -54,8 +54,8 @@ const SupportV2Panel: React.FC<SupportV2PanelProps> = ({ className = "" }) => {
       </div>
 
       <div className="space-y-3">
-        {(Object.keys(SUPPORT_V2_PARAM_LIMITS) as Array<
-          keyof typeof SUPPORT_V2_PARAM_LIMITS
+        {(Object.keys(SUPPORT_PARAM_LIMITS) as Array<
+          keyof typeof SUPPORT_PARAM_LIMITS
         >).map((key) => (
           <ParamRow
             key={key}
@@ -71,7 +71,7 @@ const SupportV2Panel: React.FC<SupportV2PanelProps> = ({ className = "" }) => {
 };
 
 interface ParamRowProps {
-  paramKey: keyof typeof SUPPORT_V2_PARAM_LIMITS;
+  paramKey: keyof typeof SUPPORT_PARAM_LIMITS;
   value: number;
   disabled: boolean;
   onChange: (v: number) => void;
@@ -83,7 +83,7 @@ const ParamRow: React.FC<ParamRowProps> = ({
   disabled,
   onChange,
 }) => {
-  const limit = SUPPORT_V2_PARAM_LIMITS[paramKey];
+  const limit = SUPPORT_PARAM_LIMITS[paramKey];
 
   const commit = (raw: number) => {
     if (Number.isNaN(raw)) return;
@@ -127,7 +127,4 @@ const ParamRow: React.FC<ParamRowProps> = ({
   );
 };
 
-export default SupportV2Panel;
-
-// 외부에서 타입 추론용으로 다시 export.
-export type { SupportV2Params };
+export default SupportParamsPanel;

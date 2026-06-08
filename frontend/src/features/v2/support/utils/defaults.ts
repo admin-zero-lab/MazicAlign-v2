@@ -1,12 +1,10 @@
-import type { SupportV2Params } from "../types";
+import type { SupportParams } from "../types";
 
 /**
  * 일반적인 SLA 출력 기준의 무난한 시작 값.
- *
- * 단위: deg / mm. 의도적으로 옛 support v1 의 기본값을 보지 않고
- * SLA 가이드라인의 통용 수치로 잡았다.
+ * 단위: deg / mm.
  */
-export const DEFAULT_SUPPORT_V2_PARAMS: SupportV2Params = {
+export const DEFAULT_SUPPORT_PARAMS: SupportParams = {
   overhangAngleDeg: 45,
   trunkDiameterMm: 0.8,
   tipDiameterMm: 0.4,
@@ -17,10 +15,10 @@ export const DEFAULT_SUPPORT_V2_PARAMS: SupportV2Params = {
 };
 
 /**
- * 각 파라미터의 허용 범위. UI 슬라이더 / 입력 유효성 검사 양쪽에서 쓴다.
+ * 각 파라미터의 허용 범위. UI 슬라이더 / 유효성 검사 양쪽에서 쓴다.
  */
-export const SUPPORT_V2_PARAM_LIMITS: Record<
-  keyof Omit<SupportV2Params, "autoSizeTrunk">,
+export const SUPPORT_PARAM_LIMITS: Record<
+  keyof Omit<SupportParams, "autoSizeTrunk">,
   { min: number; max: number; step: number; unit: string; label: string }
 > = {
   overhangAngleDeg: { min: 10, max: 80, step: 1, unit: "°", label: "오버행 임계각" },
