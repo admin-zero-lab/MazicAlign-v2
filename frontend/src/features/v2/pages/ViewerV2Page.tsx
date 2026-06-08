@@ -1,10 +1,13 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useParams, useNavigate, Navigate } from "react-router-dom";
 
 import { useProjectV2 } from "../hooks/useProjectsV2";
 import { SupportParamsPanel, useSupportParamsStore } from "../support";
-import BabylonScene from "../components/BabylonScene";
+import BabylonScene, {
+  type BabylonSceneHandle,
+} from "../components/BabylonScene";
 import LocalFileBrowser from "../components/LocalFileBrowser";
+import ViewControls from "../components/ViewControls";
 
 /**
  * v2 프로젝트 작업 화면.
@@ -21,6 +24,7 @@ const ViewerV2Page: React.FC = () => {
   const [stlBlob, setStlBlob] = useState<Blob | null>(null);
   const [stlName, setStlName] = useState<string | null>(null);
   const [browserOpen, setBrowserOpen] = useState(false);
+  const sceneHandleRef = useRef<BabylonSceneHandle>(null);
 
   const overhangAngleDeg = useSupportParamsStore(
     (s) => s.params.overhangAngleDeg,
@@ -88,39 +92,62 @@ const ViewerV2Page: React.FC = () => {
 
       <div className="flex-1 flex min-h-0">
         <main className="flex-1 relative bg-gray-100">
+          <BabylonScene
+            ref={sceneHandleRef}
+            stlBlob={stlBlob}
+            overhangAngleDeg={overhangAngleDeg}
+          />
+
+          <ViewControls
+            onSetView={(p) => sceneHandleRef.current?.setView(p)}
+            onFit={() => sceneHandleRef.current?.fit()}
+          />
+
           {stlBlob ? (
-            <>
-              <BabylonScene
-                stlBlob={stlBlob}
-                overhangAngleDeg={overhangAngleDeg}
-              />
-              <div className="absolute bottom-3 left-3 bg-white/90 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-700 space-y-1 pointer-events-none">
-                <div className="flex items-center space-x-2">
-                  <span
-                    className="inline-block w-3 h-3 rounded-sm"
-                    style={{ background: "rgb(255, 82, 82)" }}
-                  />
-                  <span>Overhang (≤ {overhangAngleDeg}°)</span>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <span
-                    className="inline-block w-3 h-3 rounded-sm"
-                    style={{ background: "rgb(199, 202, 212)" }}
-                  />
-                  <span>Safe</span>
-                </div>
+            <div className="absolute bottom-3 left-3 bg-white/90 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-700 space-y-1 pointer-events-none">
+              <div className="flex items-center space-x-2">
+                <span
+                  className="inline-block w-3 h-3 rounded-sm"
+                  style={{ background: "rgb(255, 82, 82)" }}
+                />
+                <span>Overhang (≤ {overhangAngleDeg}°)</span>
               </div>
-            </>
-          ) : (
-            <div className="absolute inset-0 flex items-center justify-center text-gray-400">
-              <div className="text-center">
-                <p className="text-sm">STL 파일을 불러오세요.</p>
-                <p className="text-xs mt-2">
-                  상단의 'STL 불러오기' 버튼을 누르면 화면에 표시됩니다.
-                </p>
+              <div className="flex items-center space-x-2">
+                <span
+                  className="inline-block w-3 h-3 rounded-sm"
+                  style={{ background: "rgb(199, 202, 212)" }}
+                />
+                <span>Safe</span>
               </div>
             </div>
+          ) : (
+            <div className="absolute top-3 left-3 bg-white/90 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-600 pointer-events-none">
+              상단의 'STL 불러오기' 버튼으로 파일을 가져오세요.
+            </div>
           )}
+
+          <div className="absolute bottom-3 right-3 bg-white/90 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-600 pointer-events-none">
+            <div className="flex items-center space-x-2">
+              <span
+                className="inline-block w-3 h-1 rounded"
+                style={{ background: "rgb(255,77,77)" }}
+              />
+              <span>X</span>
+              <span
+                className="inline-block w-3 h-1 rounded ml-2"
+                style={{ background: "rgb(77,230,102)" }}
+              />
+              <span>Y (위)</span>
+              <span
+                className="inline-block w-3 h-1 rounded ml-2"
+                style={{ background: "rgb(89,140,255)" }}
+              />
+              <span>Z</span>
+            </div>
+            <div className="mt-1 text-gray-500">
+              플레이트 200 × 125 mm · 격자 10 mm
+            </div>
+          </div>
         </main>
 
         <aside className="w-80 border-l bg-white p-4 overflow-y-auto">

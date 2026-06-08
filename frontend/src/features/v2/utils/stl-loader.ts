@@ -1,11 +1,9 @@
 import {
-  ArcRotateCamera,
   Color3,
   Mesh,
   Scene,
   SceneLoader,
   StandardMaterial,
-  Vector3,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/STL";
 
@@ -52,24 +50,4 @@ export async function loadStlIntoScene(
   mesh.material = mat;
 
   return mesh;
-}
-
-/**
- * 주어진 Mesh 의 AABB 를 카메라에 맞춰 보기 좋게 프레임한다.
- */
-export function frameCameraToMesh(camera: ArcRotateCamera, mesh: Mesh): void {
-  mesh.computeWorldMatrix(true);
-  const bb = mesh.getBoundingInfo().boundingBox;
-  const min = bb.minimumWorld;
-  const max = bb.maximumWorld;
-
-  const center = Vector3.Center(min, max);
-  const diag = max.subtract(min).length();
-
-  camera.target.copyFrom(center);
-  camera.radius = diag * 1.8;
-  camera.alpha = -Math.PI / 4;
-  camera.beta = Math.PI / 3;
-  camera.lowerRadiusLimit = diag * 0.3;
-  camera.upperRadiusLimit = diag * 6;
 }
