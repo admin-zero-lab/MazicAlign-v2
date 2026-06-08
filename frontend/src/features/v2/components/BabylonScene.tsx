@@ -10,7 +10,9 @@ import {
   Color4,
   Engine,
   HemisphericLight,
+  HighlightLayer,
   Mesh,
+  PointerEventTypes,
   Scene,
   Vector3,
 } from "@babylonjs/core";
@@ -31,41 +33,55 @@ import type { STLFileV2 } from "../types/stl";
 
 const PLATE_WIDTH_MM = 200;
 const PLATE_DEPTH_MM = 125;
+const HIGHLIGHT_COLOR = new Color3(1.0, 0.78, 0.18); // 따뜻한 노랑
 
 interface BabylonSceneProps {
-  /** 프로젝트의 STL 파일 목록. 추가·삭제 시 자동 동기화. */
+  /** 프로젝트의 STL 파일 목록. */
   files: STLFileV2[];
+  /** 선택된 STL id (좌측 리스트 / 픽 클릭 양방향). null = 선택 없음. */
+  selectedId: string | null;
+  /** 씬에서 픽으로 선택 변경됐을 때 부모에 알림. 빈 공간 클릭은 null. */
+  onSelectId: (id: string | null) => void;
   /** 오버행 임계각 (deg). */
   overhangAngleDeg: number;
   className?: string;
 }
 
-/**
- * v2 의 자기완결 Babylon 씬 (다중 메쉬).
- *
- * files 배열을 watch 해서:
- *   - 새로 들어온 file → STL 로드 + 색 적용
- *   - 사라진 file       → mesh dispose
- * overhangAngleDeg 변경 시 등록된 모든 mesh 의 색만 재할당.
- *
- * 외부 명령: setView, fit
- */
 export interface BabylonSceneHandle {
   setView: (preset: ViewPreset) => void;
   fit: () => void;
 }
 
 const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
-  function BabylonScene({ files, overhangAngleDeg, className = "" }, ref) {
+  function BabylonScene(
+    { files, selectedId, onSelectId, overhangAngleDeg, className = "" },
+    ref,
+  ) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const engineRef = useRef<Engine | null>(null);
     const sceneRef = useRef<Scene | null>(null);
     const cameraRef = useRef<ArcRotateCamera | null>(null);
     const meshMapRef = useRef<Map<string, Mesh>>(new Map());
     const furnitureRef = useRef<SceneFurniture | null>(null);
-    const overhangRef = useRef<number>(overhangAngleDeg);
+    const highlightRef = useRef<HighlightLayer | null>(null);
 
+    // 최신 값을 effect 바깥에서 참조할 수 있게 ref 로 동기화.
+    const overhangRef = useRef<number>(overhangAngleDeg);
     overhangRef.current = overhangAngleDeg;
+    const selectedRef = useRef<string | null>(selectedId);
+    selectedRef.current = selectedId;
+    const onSelectRef = useRef(onSelectId);
+    onSelectRef.current = onSelectId;
+
+    function refreshHighlight() {
+      const hl = highlightRef.current;
+      if (!hl) return;
+      hl.removeAllMeshes();
+      const sel = selectedRef.current;
+      if (!sel) return;
+      const mesh = meshMapRef.current.get(sel);
+      if (mesh) hl.addMesh(mesh, HIGHLIGHT_COLOR);
+    }
 
     // 1) 씬 부트스트랩
     useEffect(() => {
@@ -114,6 +130,35 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         depthMm: PLATE_DEPTH_MM,
       });
 
+      const hl = new HighlightLayer("v2_highlight", scene, {
+        blurHorizontalSize: 0.6,
+        blurVerticalSize: 0.6,
+      });
+      hl.innerGlow = false;
+      hl.outerGlow = true;
+      highlightRef.current = hl;
+
+      // 클릭 픽업: 좌클릭으로 단순 클릭 (드래그 없는) 시 mesh 픽.
+      // 메쉬 위면 선택, 빈 공간이면 선택 해제.
+      scene.onPointerObservable.add((info) => {
+        if (info.type !== PointerEventTypes.POINTERPICK) return;
+        const evt = info.event as PointerEvent;
+        if (evt.button !== 0) return; // 좌클릭만
+
+        const picked = info.pickInfo?.pickedMesh;
+        if (!picked) {
+          onSelectRef.current(null);
+          return;
+        }
+        for (const [id, mesh] of meshMapRef.current) {
+          if (mesh === picked) {
+            onSelectRef.current(id);
+            return;
+          }
+        }
+        // 픽된 게 furniture (plate/grid/axes) 면 무시.
+      });
+
       engineRef.current = engine;
       sceneRef.current = scene;
       cameraRef.current = camera;
@@ -133,6 +178,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         meshMapRef.current.clear();
         furnitureRef.current?.dispose();
         furnitureRef.current = null;
+        hl.dispose();
+        highlightRef.current = null;
         scene.dispose();
         engine.dispose();
         engineRef.current = null;
@@ -152,7 +199,6 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       const currentIds = new Set(meshMapRef.current.keys());
       const nextIds = new Set(files.map((f) => f.id));
 
-      // 사라진 파일: dispose
       for (const id of currentIds) {
         if (!nextIds.has(id)) {
           meshMapRef.current.get(id)?.dispose();
@@ -160,7 +206,6 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         }
       }
 
-      // 신규 파일: load
       const newFiles = files.filter((f) => !currentIds.has(f.id));
       const wasEmpty = currentIds.size === 0;
 
@@ -173,6 +218,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
               return null;
             }
             applyOverhangColors(mesh, overhangRef.current);
+            mesh.isPickable = true;
             meshMapRef.current.set(f.id, mesh);
             return mesh;
           } catch (e) {
@@ -182,13 +228,13 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         }),
       ).then((loaded) => {
         if (cancelled) return;
-        // 메쉬가 비어있었다가 처음 들어왔다면 카메라 fit
         if (wasEmpty && loaded.some((m) => m !== null)) {
           frameCameraToMeshes(
             camera,
             loaded.filter((m): m is Mesh => m !== null),
           );
         }
+        refreshHighlight();
       });
 
       return () => {
@@ -203,7 +249,13 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       }
     }, [overhangAngleDeg]);
 
-    // 4) 외부 ref API
+    // 4) 선택 변경 시 highlight 갱신
+    useEffect(() => {
+      refreshHighlight();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedId]);
+
+    // 5) 외부 ref API
     useImperativeHandle(
       ref,
       () => ({

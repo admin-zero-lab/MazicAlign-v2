@@ -104,6 +104,8 @@ const ViewerV2Page: React.FC = () => {
           <BabylonScene
             ref={sceneHandleRef}
             files={files}
+            selectedId={selectedId}
+            onSelectId={setSelectedId}
             overhangAngleDeg={overhangAngleDeg}
           />
 
