@@ -3,6 +3,11 @@
 
 export * from "./support";
 export { useProjectsV2, useProjectV2 } from "./hooks/useProjectsV2";
+export {
+  useShortcutsListener,
+  useShortcutHandler,
+  type ShortcutAction,
+} from "./hooks/useShortcuts";
 export type {
   ProjectV2,
   ProjectV2CreateInput,

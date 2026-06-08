@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { useParams, useNavigate, Navigate } from "react-router-dom";
 
 import { useProjectV2 } from "../hooks/useProjectsV2";
+import { useShortcutsListener } from "../hooks/useShortcuts";
 import { SupportParamsPanel, useSupportParamsStore } from "../support";
 import BabylonScene, {
   type BabylonSceneHandle,
@@ -29,6 +30,9 @@ const ViewerV2Page: React.FC = () => {
   const overhangAngleDeg = useSupportParamsStore(
     (s) => s.params.overhangAngleDeg,
   );
+
+  // 글로벌 단축키 리스너 설치 (액션은 추후 단계에서 등록).
+  useShortcutsListener();
 
   if (!projectId) {
     return <Navigate to="/v2/projects" replace />;
