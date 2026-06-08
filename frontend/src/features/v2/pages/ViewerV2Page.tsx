@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { useParams, useNavigate, Navigate } from "react-router-dom";
 
 import { useProjectV2 } from "../hooks/useProjectsV2";
-import { SupportParamsPanel } from "../support";
+import { SupportParamsPanel, useSupportParamsStore } from "../support";
 import BabylonScene from "../components/BabylonScene";
 
 /**
@@ -21,6 +21,10 @@ const ViewerV2Page: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [stlBlob, setStlBlob] = useState<Blob | null>(null);
   const [stlName, setStlName] = useState<string | null>(null);
+
+  const overhangAngleDeg = useSupportParamsStore(
+    (s) => s.params.overhangAngleDeg,
+  );
 
   if (!projectId) {
     return <Navigate to="/v2/projects" replace />;
@@ -98,7 +102,28 @@ const ViewerV2Page: React.FC = () => {
       <div className="flex-1 flex min-h-0">
         <main className="flex-1 relative bg-gray-100">
           {stlBlob ? (
-            <BabylonScene stlBlob={stlBlob} />
+            <>
+              <BabylonScene
+                stlBlob={stlBlob}
+                overhangAngleDeg={overhangAngleDeg}
+              />
+              <div className="absolute bottom-3 left-3 bg-white/90 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-700 space-y-1 pointer-events-none">
+                <div className="flex items-center space-x-2">
+                  <span
+                    className="inline-block w-3 h-3 rounded-sm"
+                    style={{ background: "rgb(255, 82, 82)" }}
+                  />
+                  <span>Overhang (≤ {overhangAngleDeg}°)</span>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <span
+                    className="inline-block w-3 h-3 rounded-sm"
+                    style={{ background: "rgb(199, 202, 212)" }}
+                  />
+                  <span>Safe</span>
+                </div>
+              </div>
+            </>
           ) : (
             <div className="absolute inset-0 flex items-center justify-center text-gray-400">
               <div className="text-center">

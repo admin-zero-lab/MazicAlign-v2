@@ -11,25 +11,29 @@ import {
 } from "@babylonjs/core";
 
 import { frameCameraToMesh, loadStlIntoScene } from "../utils/stl-loader";
+import { applyOverhangColors } from "../utils/overhang";
 
 interface BabylonSceneProps {
   /** 현재 로드된 STL Blob. null 이면 빈 씬. */
   stlBlob: Blob | null;
+  /** 오버행 임계각 (deg). 모델이 로드된 상태에서 바뀌면 색만 재할당. */
+  overhangAngleDeg: number;
   className?: string;
 }
 
 /**
  * v2 의 자기완결 Babylon 씬.
  *
- * 옛 STLViewer / babylon.utils.ts 를 일절 import 하지 않는다.
  * 첫 패스 기능:
- *   - 흰 배경, 회색 그리드 없음(추후), 단일 hemispheric light
- *   - ArcRotate camera (좌클릭 회전, 휠 줌)
- *   - STL Blob 이 바뀌면 기존 메쉬 dispose 후 다시 로드
+ *   - ArcRotate camera (좌클릭 회전 · 휠 줌)
+ *   - 단일 hemispheric light, 흰 배경
+ *   - STL Blob 변경 시 메쉬 dispose 후 재로드
  *   - 모델 AABB 에 카메라 자동 프레이밍
+ *   - 오버행 임계각 기반 vertex color 색칠 (빨강 = 오버행)
  */
 const BabylonScene: React.FC<BabylonSceneProps> = ({
   stlBlob,
+  overhangAngleDeg,
   className = "",
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -38,7 +42,7 @@ const BabylonScene: React.FC<BabylonSceneProps> = ({
   const cameraRef = useRef<ArcRotateCamera | null>(null);
   const meshRef = useRef<Mesh | null>(null);
 
-  // 씬 부트스트랩
+  // 1) 씬 부트스트랩 — 컴포넌트 수명동안 1회
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -88,7 +92,7 @@ const BabylonScene: React.FC<BabylonSceneProps> = ({
     };
   }, []);
 
-  // Blob 변경 시 메쉬 갱신
+  // 2) STL Blob 변경 시 메쉬 갱신
   useEffect(() => {
     const scene = sceneRef.current;
     const camera = cameraRef.current;
@@ -96,7 +100,6 @@ const BabylonScene: React.FC<BabylonSceneProps> = ({
 
     let cancelled = false;
 
-    // 기존 메쉬 정리
     meshRef.current?.dispose();
     meshRef.current = null;
 
@@ -109,6 +112,7 @@ const BabylonScene: React.FC<BabylonSceneProps> = ({
           mesh.dispose();
           return;
         }
+        applyOverhangColors(mesh, overhangAngleDeg);
         meshRef.current = mesh;
         frameCameraToMesh(camera, mesh);
       } catch (e) {
@@ -119,7 +123,17 @@ const BabylonScene: React.FC<BabylonSceneProps> = ({
     return () => {
       cancelled = true;
     };
+    // overhangAngleDeg 는 의도적으로 deps 에서 제외: 모델 갱신은
+    // Blob 기준으로만 일어나고, 임계각 변경은 아래 effect 가 처리한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stlBlob]);
+
+  // 3) 임계각만 바뀌면 색만 재할당 (비싼 STL 재로드 회피)
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    applyOverhangColors(mesh, overhangAngleDeg);
+  }, [overhangAngleDeg]);
 
   return (
     <canvas

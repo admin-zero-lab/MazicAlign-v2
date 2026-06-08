@@ -1,17 +1,23 @@
 import {
   ArcRotateCamera,
+  Color3,
   Mesh,
   Scene,
   SceneLoader,
+  StandardMaterial,
   Vector3,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/STL";
 
 /**
- * STL Blob → Babylon Mesh. 옛 stl-loader.utils.ts 와 무관하게 다시
- * 짠다. Babylon 의 자체 STL 로더(@babylonjs/loaders) 를 사용한다.
+ * STL Blob → Babylon Mesh.
  *
- * 반환 Mesh 는 scene 에 추가된 상태. 호출 측에서 dispose 책임.
+ * STL 좌표계 (Z-up) 를 Babylon (Y-up) 에 맞추기 위해 X 축 -90° 회전
+ * 을 vertex 에 베이크한다. 베이크 후 normal 도 갱신되므로 오버행
+ * 판정에서 -Y 만 보면 된다.
+ *
+ * material 은 흰색 StandardMaterial 로 잡아 vertex color 가 그대로
+ * 표면에 보이게 한다.
  */
 export async function loadStlIntoScene(
   scene: Scene,
@@ -32,18 +38,24 @@ export async function loadStlIntoScene(
   if (meshes.length === 0) {
     throw new Error("STL 로드 결과에 메쉬가 없습니다.");
   }
-
-  // STL 은 보통 하나의 메쉬. 여러 개라면 첫 번째.
   const mesh = meshes[0];
   mesh.name = meshName;
+
+  // STL Z-up → Babylon Y-up: X 축 -90° 회전 후 vertex 에 베이크.
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.bakeCurrentTransformIntoVertices();
+
+  const mat = new StandardMaterial(`${meshName}-mat`, scene);
+  mat.diffuseColor = new Color3(1, 1, 1);
+  mat.specularColor = new Color3(0.12, 0.12, 0.12);
+  mat.backFaceCulling = true;
+  mesh.material = mat;
+
   return mesh;
 }
 
 /**
  * 주어진 Mesh 의 AABB 를 카메라에 맞춰 보기 좋게 프레임한다.
- *
- * STL 출력 좌표는 통상 Z-up 인데, Babylon 은 Y-up 이라 import 시점에
- * 90° 회전되어 들어온다. 우리는 Babylon 좌표계 그대로 보여준다.
  */
 export function frameCameraToMesh(camera: ArcRotateCamera, mesh: Mesh): void {
   mesh.computeWorldMatrix(true);
