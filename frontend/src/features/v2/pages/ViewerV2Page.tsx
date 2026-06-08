@@ -1,9 +1,13 @@
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useParams, useNavigate, Navigate } from "react-router-dom";
 
 import { useProjectV2 } from "../hooks/useProjectsV2";
 import { useStlFilesV2 } from "../hooks/useStlFilesV2";
-import { useShortcutsListener } from "../hooks/useShortcuts";
+import {
+  useShortcutsListener,
+  useShortcutHandler,
+} from "../hooks/useShortcuts";
+import { useClipboardStore } from "../hooks/useClipboardStore";
 import { SupportParamsPanel, useSupportParamsStore } from "../support";
 import BabylonScene, {
   type BabylonSceneHandle,
@@ -15,11 +19,14 @@ import StlFileList from "../components/StlFileList";
 /**
  * v2 프로젝트 작업 화면.
  *
- * 레이아웃 (좌→우):
- *   [STL 리스트 56]  [3D viewport]  [Support 패널 80]
- *
- * 파일 입력은 백엔드 /api/fs · /api/fs/read 경유. 받은 Blob 은
- * 즉시 IndexedDB(stl_files) 에 저장 → useStlFilesV2 가 자동 반영.
+ * 다중 선택 + 클립보드:
+ *   · 좌클릭 (씬 또는 리스트)         → 단일 선택
+ *   · Ctrl/Meta+좌클릭                → 토글
+ *   · 빈 공간 좌클릭                  → 선택 해제
+ *   · Ctrl+A                          → 전체 선택
+ *   · Ctrl+C                          → 선택된 파일을 클립보드에 복사
+ *   · Ctrl+X                          → 복사 + 원본 삭제
+ *   · Ctrl+V                          → 클립보드 파일을 새 ID 로 추가
  */
 const ViewerV2Page: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>();
@@ -34,7 +41,9 @@ const ViewerV2Page: React.FC = () => {
   } = useStlFilesV2(projectId);
 
   const [browserOpen, setBrowserOpen] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const sceneHandleRef = useRef<BabylonSceneHandle>(null);
 
   const overhangAngleDeg = useSupportParamsStore(
@@ -43,19 +52,86 @@ const ViewerV2Page: React.FC = () => {
 
   useShortcutsListener();
 
+  // ----- 선택 관리 -----
+  const handlePick = useCallback(
+    (id: string | null, opts: { multi: boolean }) => {
+      setSelectedIds((prev) => {
+        if (!id) return opts.multi ? prev : new Set();
+        const next = new Set(prev);
+        if (opts.multi) {
+          if (next.has(id)) next.delete(id);
+          else next.add(id);
+          return next;
+        }
+        return new Set([id]);
+      });
+    },
+    [],
+  );
+
+  // ----- 단축키 액션 -----
+  const handleSelectAll = useCallback(() => {
+    setSelectedIds(new Set(files.map((f) => f.id)));
+  }, [files]);
+
+  const handleCopy = useCallback(() => {
+    if (selectedIds.size === 0) return;
+    const items = files
+      .filter((f) => selectedIds.has(f.id))
+      .map((f) => ({ fileName: f.fileName, blob: f.blob }));
+    useClipboardStore.getState().set(items);
+  }, [files, selectedIds]);
+
+  const handleCut = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    const toCut = files.filter((f) => selectedIds.has(f.id));
+    useClipboardStore.getState().set(
+      toCut.map((f) => ({ fileName: f.fileName, blob: f.blob })),
+    );
+    for (const f of toCut) {
+      await removeStlFile(f.id);
+    }
+    setSelectedIds(new Set());
+  }, [files, selectedIds, removeStlFile]);
+
+  const handlePaste = useCallback(async () => {
+    const items = useClipboardStore.getState().items;
+    if (items.length === 0) return;
+    const newIds: string[] = [];
+    for (const item of items) {
+      const created = await addStlFile(
+        addCopySuffix(item.fileName, files),
+        item.blob,
+      );
+      newIds.push(created.id);
+    }
+    setSelectedIds(new Set(newIds));
+  }, [files, addStlFile]);
+
+  useShortcutHandler("selectAll", handleSelectAll);
+  useShortcutHandler("copy", handleCopy);
+  useShortcutHandler("cut", handleCut);
+  useShortcutHandler("paste", handlePaste);
+
   if (!projectId) {
     return <Navigate to="/v2/projects" replace />;
   }
 
+  // ----- 파일 추가 / 삭제 -----
   async function handlePicked(file: { name: string; blob: Blob }) {
     setBrowserOpen(false);
     const created = await addStlFile(file.name, file.blob);
-    setSelectedId(created.id);
+    setSelectedIds(new Set([created.id]));
   }
 
   async function handleRemove(id: string) {
     await removeStlFile(id);
-    if (selectedId === id) setSelectedId(null);
+    setSelectedIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   }
 
   return (
@@ -93,8 +169,8 @@ const ViewerV2Page: React.FC = () => {
       <div className="flex-1 flex min-h-0">
         <StlFileList
           files={files}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
+          selectedIds={selectedIds}
+          onPick={(id, opts) => handlePick(id, opts)}
           onAdd={() => setBrowserOpen(true)}
           onRemove={handleRemove}
           loading={filesLoading}
@@ -104,8 +180,8 @@ const ViewerV2Page: React.FC = () => {
           <BabylonScene
             ref={sceneHandleRef}
             files={files}
-            selectedId={selectedId}
-            onSelectId={setSelectedId}
+            selectedIds={selectedIds}
+            onPick={handlePick}
             overhangAngleDeg={overhangAngleDeg}
           />
 
@@ -180,5 +256,26 @@ const ViewerV2Page: React.FC = () => {
     </div>
   );
 };
+
+/**
+ * `model.stl` 이 이미 있을 때 `model (copy).stl`,
+ * 그것도 있으면 `model (copy 2).stl` 식으로 이름 충돌을 피한다.
+ */
+function addCopySuffix(name: string, existing: { fileName: string }[]): string {
+  const existingNames = new Set(existing.map((e) => e.fileName));
+  if (!existingNames.has(name)) return name;
+
+  const dotIdx = name.lastIndexOf(".");
+  const stem = dotIdx > 0 ? name.slice(0, dotIdx) : name;
+  const ext = dotIdx > 0 ? name.slice(dotIdx) : "";
+
+  let candidate = `${stem} (copy)${ext}`;
+  let i = 2;
+  while (existingNames.has(candidate)) {
+    candidate = `${stem} (copy ${i})${ext}`;
+    i++;
+  }
+  return candidate;
+}
 
 export default ViewerV2Page;

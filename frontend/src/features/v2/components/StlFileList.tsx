@@ -2,8 +2,8 @@ import type { STLFileV2 } from "../types/stl";
 
 interface StlFileListProps {
   files: STLFileV2[];
-  selectedId: string | null;
-  onSelect: (id: string | null) => void;
+  selectedIds: ReadonlySet<string>;
+  onPick: (id: string, opts: { multi: boolean }) => void;
   onAdd: () => void;
   onRemove: (id: string) => void;
   loading?: boolean;
@@ -12,12 +12,12 @@ interface StlFileListProps {
 
 /**
  * 좌측 STL 리스트 패널.
- * 옛 STLFileList 와 무관. 자기완결.
+ * 다중 선택 지원 — Ctrl/Meta+클릭 으로 토글.
  */
 const StlFileList: React.FC<StlFileListProps> = ({
   files,
-  selectedId,
-  onSelect,
+  selectedIds,
+  onPick,
   onAdd,
   onRemove,
   loading = false,
@@ -30,7 +30,10 @@ const StlFileList: React.FC<StlFileListProps> = ({
       <div className="px-3 py-3 border-b border-gray-200 flex items-center justify-between">
         <span className="text-sm font-semibold text-gray-800">
           모델
-          <span className="ml-1 text-xs text-gray-400">({files.length})</span>
+          <span className="ml-1 text-xs text-gray-400">
+            ({files.length}
+            {selectedIds.size > 0 ? ` · ${selectedIds.size} 선택` : ""})
+          </span>
         </span>
         <button
           onClick={onAdd}
@@ -53,11 +56,11 @@ const StlFileList: React.FC<StlFileListProps> = ({
         )}
         {!loading &&
           files.map((f) => {
-            const isSelected = selectedId === f.id;
+            const isSelected = selectedIds.has(f.id);
             return (
               <div
                 key={f.id}
-                onClick={() => onSelect(isSelected ? null : f.id)}
+                onClick={(e) => onPick(f.id, { multi: e.ctrlKey || e.metaKey })}
                 className={`group px-3 py-2 cursor-pointer border-l-2 transition-colors ${
                   isSelected
                     ? "bg-primary-50 border-primary-500"
@@ -67,7 +70,9 @@ const StlFileList: React.FC<StlFileListProps> = ({
                 <div className="flex items-center justify-between">
                   <span
                     className={`text-sm truncate ${
-                      isSelected ? "text-primary-700 font-medium" : "text-gray-700"
+                      isSelected
+                        ? "text-primary-700 font-medium"
+                        : "text-gray-700"
                     }`}
                     title={f.fileName}
                   >

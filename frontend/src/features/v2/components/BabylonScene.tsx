@@ -38,10 +38,14 @@ const HIGHLIGHT_COLOR = new Color3(1.0, 0.78, 0.18); // 따뜻한 노랑
 interface BabylonSceneProps {
   /** 프로젝트의 STL 파일 목록. */
   files: STLFileV2[];
-  /** 선택된 STL id (좌측 리스트 / 픽 클릭 양방향). null = 선택 없음. */
-  selectedId: string | null;
-  /** 씬에서 픽으로 선택 변경됐을 때 부모에 알림. 빈 공간 클릭은 null. */
-  onSelectId: (id: string | null) => void;
+  /** 선택된 STL id 집합. 다중 선택 지원. */
+  selectedIds: ReadonlySet<string>;
+  /**
+   * 씬에서 픽으로 선택 변경됐을 때 부모에 알림.
+   * - id == null  → 빈 공간 클릭
+   * - opts.multi  → Ctrl/Meta 키 동시 누름 (토글)
+   */
+  onPick: (id: string | null, opts: { multi: boolean }) => void;
   /** 오버행 임계각 (deg). */
   overhangAngleDeg: number;
   className?: string;
@@ -54,7 +58,7 @@ export interface BabylonSceneHandle {
 
 const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
   function BabylonScene(
-    { files, selectedId, onSelectId, overhangAngleDeg, className = "" },
+    { files, selectedIds, onPick, overhangAngleDeg, className = "" },
     ref,
   ) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -68,19 +72,19 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     // 최신 값을 effect 바깥에서 참조할 수 있게 ref 로 동기화.
     const overhangRef = useRef<number>(overhangAngleDeg);
     overhangRef.current = overhangAngleDeg;
-    const selectedRef = useRef<string | null>(selectedId);
-    selectedRef.current = selectedId;
-    const onSelectRef = useRef(onSelectId);
-    onSelectRef.current = onSelectId;
+    const selectedRef = useRef<ReadonlySet<string>>(selectedIds);
+    selectedRef.current = selectedIds;
+    const onPickRef = useRef(onPick);
+    onPickRef.current = onPick;
 
     function refreshHighlight() {
       const hl = highlightRef.current;
       if (!hl) return;
       hl.removeAllMeshes();
-      const sel = selectedRef.current;
-      if (!sel) return;
-      const mesh = meshMapRef.current.get(sel);
-      if (mesh) hl.addMesh(mesh, HIGHLIGHT_COLOR);
+      for (const id of selectedRef.current) {
+        const mesh = meshMapRef.current.get(id);
+        if (mesh) hl.addMesh(mesh, HIGHLIGHT_COLOR);
+      }
     }
 
     // 1) 씬 부트스트랩
@@ -144,15 +148,16 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         if (info.type !== PointerEventTypes.POINTERPICK) return;
         const evt = info.event as PointerEvent;
         if (evt.button !== 0) return; // 좌클릭만
+        const multi = evt.ctrlKey || evt.metaKey;
 
         const picked = info.pickInfo?.pickedMesh;
         if (!picked) {
-          onSelectRef.current(null);
+          onPickRef.current(null, { multi });
           return;
         }
         for (const [id, mesh] of meshMapRef.current) {
           if (mesh === picked) {
-            onSelectRef.current(id);
+            onPickRef.current(id, { multi });
             return;
           }
         }
@@ -253,7 +258,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     useEffect(() => {
       refreshHighlight();
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selectedId]);
+    }, [selectedIds]);
 
     // 5) 외부 ref API
     useImperativeHandle(
