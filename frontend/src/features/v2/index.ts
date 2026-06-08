@@ -8,4 +8,5 @@ export type {
   ProjectV2CreateInput,
 } from "./types/project";
 
-// pages 가 추가되면 여기서도 re-export.
+export { default as ProjectsV2Page } from "./pages/ProjectsV2Page";
+export { default as ViewerV2Page } from "./pages/ViewerV2Page";
