@@ -63,38 +63,45 @@ export const createCamera = (scene: Scene, canvas: HTMLCanvasElement): ArcRotate
   // useCtrlForPanning = false (Ctrl 키 없이 패닝)
   camera.attachControl(canvas, true, false);
 
+  // 패닝(이동)은 휠클릭(1)에만 허용. 카메라와 PointersInput 양쪽 모두에 직접
+  // panningMouseButton을 1로 박아, 우클릭이 화면을 평행이동시키는 회귀를 봉쇄한다.
+  // (사용자 강조: "Transform 챕터에서 우클릭으로 화면 이동 금지")
+  (camera as unknown as { _panningMouseButton: number })._panningMouseButton = 1;
+
   // 화살표 키는 모델의 Z축(상하) 이동 단축키로 사용하므로
   // 카메라 기본 키보드 이동 입력을 제거해 키 충돌을 방지한다.
   camera.inputs.removeByType('ArcRotateCameraKeyboardMoveInput');
 
-  // 줌 속도 개선
-  // wheelPrecision: default 50. Lower is faster.
+  // 줌 — 휠 스크롤 + *마우스 커서 위치* 기준. zoomToMouseLocation=true 면 카메라가
+  // 줌인할수록 마우스가 가리키는 지점이 화면에서 그대로 유지된다.
+  // wheelPrecision: default 50. 낮을수록 빠름.
   camera.wheelPrecision = 10;
+  camera.zoomToMouseLocation = true;
 
-  // 패닝 속도 및 관성 설정 (1:1 이동 느낌)
-  // panningSensibility: default 1000. Lower is faster.
-  // 10 was too fast (moved more than mouse). Increased to 50 to slow it down.
-  camera.panningSensibility = 50;
-  // panningInertia: default 0.9. 
-  // User requested "smoothness" similar to rotation.
-  // 0.1 was too stiff. 0.7 provides a good balance of 1:1 feel + smoothness.
+  // 패닝(시점 이동) — 휠클릭(1) 드래그로 활성. panningMouseButton 을 1 로 두고
+  // pointersInput.buttons 에 1·2 를 함께 둔다. 우클릭(2)은 panningMouseButton 과
+  // 다른 값이라 회전으로 동작.
+  camera.panningSensibility = 50; // 낮을수록 빠름
   camera.panningInertia = 0.7;
 
-  // 마우스 버튼 매핑
-  // 0: Left, 1: Middle, 2: Right
-
-  // Panning (이동): Middle Click (1)
-  // Explicitly set property (and private property for older versions)
-  (camera as any).panningMouseButton = 1;
-  (camera as any)._panningMouseButton = 1;
-
-  // Rotation (회전): Right Click (2)
-  // Configure the pointers input to accept both Middle (Pan) and Right (Rotate)
-  // Left Click (0) is excluded so it can be used for selection
-  const pointersInput = (camera.inputs.attached.pointers as any);
+  // 마우스 버튼 매핑 (0: 좌, 1: 휠, 2: 우):
+  //  - 좌클릭(0): 모델 선택 + PointerDrag. 카메라 입력에서 제외.
+  //  - 휠클릭(1): 카메라 패닝(시점 이동).
+  //  - 우클릭(2): 카메라 회전.
+  //  - 휠 스크롤  : 마우스 위치 기준 줌.
+  const pointersInput = (camera.inputs.attached.pointers as unknown as {
+    buttons?: number[];
+    panningMouseButton?: number;
+    _panningMouseButton?: number;
+  });
   if (pointersInput) {
     pointersInput.buttons = [1, 2];
+    pointersInput.panningMouseButton = 1;
+    pointersInput._panningMouseButton = 1;
   }
+  // 우클릭이 카메라 입력에서 빠졌어도 브라우저 기본 컨텍스트 메뉴가 뜨면
+  // 작업 흐름이 끊기므로 차단한다.
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
   camera.minZ = 0.1; // 최소 클리핑 거리
   camera.maxZ = 3000; // 최대 클리핑 거리 (줌아웃 1000 거리 수용)
@@ -361,37 +368,25 @@ export const createGizmoManager = (scene: Scene, utilityLayer: UtilityLayerRende
   gizmoManager.positionGizmoEnabled = true;
   gizmoManager.rotationGizmoEnabled = true;
   gizmoManager.scaleGizmoEnabled = false;
-  gizmoManager.boundingBoxGizmoEnabled = true; // 바운딩 박스 표시 (조작 불가)
+  // 선택 시 바운딩 박스(외곽선)는 표시하지 않는다.
+  gizmoManager.boundingBoxGizmoEnabled = false;
 
   const positionGizmo = gizmoManager.gizmos.positionGizmo;
   const rotationGizmo = gizmoManager.gizmos.rotationGizmo;
-  const boundingBoxGizmo = gizmoManager.gizmos.boundingBoxGizmo;
 
   if (positionGizmo) {
     positionGizmo.updateGizmoRotationToMatchAttachedMesh = false;
-    // 이동 제한: X, Y축(바닥면) 직선 이동만 허용, Z축(상하) 이동 비활성화
-    // 좌표 매핑: 사용자 Z(상하) = Babylon Y → yGizmo 비활성화
-    positionGizmo.yGizmo.isEnabled = false;
+    // X·Y(바닥면) 및 Z(상하) 이동 화살표를 모두 표시한다.
+    // 좌표 매핑: 사용자 Z(상하) = Babylon Y → yGizmo가 상하 이동을 담당한다.
   }
 
   if (rotationGizmo) {
     rotationGizmo.updateGizmoRotationToMatchAttachedMesh = false;
   }
 
-  // Bounding Box는 시각적으로만 표시 (조작 핸들 비활성화)
-  if (boundingBoxGizmo) {
-    // 모든 스케일 박스 숨기기 (조작 포인트 제거)
-    boundingBoxGizmo.setEnabledScaling(false);
-    // 회전 핸들도 숨기기
-    boundingBoxGizmo.setEnabledRotationAxis('');
-    // 고정 크기로 표시
-    boundingBoxGizmo.fixedDragMeshScreenSize = true;
-  }
-
-  // 본체(바운딩박스) 자유 드래그 무력화:
-  // boundingBoxGizmoEnabled는 메쉬에 SixDofDragBehavior(6자유도 자유 드래그)를 자동
-  // 추가하는데, 이것이 회전과 Z축(상하) 이동을 유발한다. disableMovement로 이동·회전을
-  // 모두 끄고, 본체 드래그 이동은 STL 메쉬의 PointerDragBehavior(바닥면 평면 제한)로 처리한다.
+  // boundingBoxGizmo를 꺼두면 메쉬에 SixDofDragBehavior(6자유도 자유 드래그)가
+  // 자동 추가되지 않는다. 본체 드래그 이동은 STL 메쉬의 PointerDragBehavior
+  // (바닥면 평면 제한)로 처리하며, 만일을 대비해 자유 드래그 이동도 꺼 둔다.
   gizmoManager.boundingBoxDragBehavior.disableMovement = true;
 
   return gizmoManager;

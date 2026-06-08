@@ -74,9 +74,13 @@ const SupportPanel: React.FC<SupportPanelProps> = ({
 }) => {
   const [subTab, setSubTab] = useState<SupportSubTab>('top');
 
-  /** 설정값 1개 변경 */
+  /** 설정값 1개 변경 — 숫자 입력은 소수점 첫째 자리(0.1 단위) 로 강제 반올림. */
   const set = <K extends keyof SupportSettings>(name: K, value: SupportSettings[K]) => {
-    onSettingsChange({ ...settings, [name]: value });
+    let v = value;
+    if (typeof v === 'number') {
+      v = (Math.round((v as number) * 10) / 10) as SupportSettings[K];
+    }
+    onSettingsChange({ ...settings, [name]: v });
   };
 
   /** 굵기 프리셋 적용 (직경값 일괄 변경) */
@@ -243,6 +247,19 @@ const SupportPanel: React.FC<SupportPanelProps> = ({
         <NumberField label="밀도(%)" value={settings.density} onChange={(v) => set('density', v)} step={5} min={1} />
         <NumberField label="각도(°)" value={settings.overhangAngle} onChange={(v) => set('overhangAngle', v)} step={5} min={1} />
       </div>
+
+      {/* 자동 사이징 모드 토글 */}
+      <label className="flex items-center gap-2 py-2 px-3 bg-gray-50 rounded text-sm cursor-pointer">
+        <input
+          type="checkbox"
+          checked={settings.autoSize}
+          onChange={(e) => set('autoSize', e.target.checked)}
+          className="h-4 w-4"
+        />
+        <span className="text-gray-700">
+          STL 크기 자동 맞춤 — spacing·직경을 모델 AABB 에 비례해 자동 결정
+        </span>
+      </label>
 
       {/* 자동 생성 버튼 */}
       <div className="grid grid-cols-2 gap-2">

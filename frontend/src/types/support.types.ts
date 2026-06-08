@@ -51,6 +51,9 @@ export interface SupportSettings {
   gridStartHeight: number; // 격자서포트 시작 높이(mm)
   density: number;         // 밀도(%) — 높을수록 서포트가 촘촘함
   overhangAngle: number;   // 각도(°) — 이 각도 이하의 오버행면에 서포트 생성
+
+  // 자동 사이징 — 모델 크기에 비례해 spacing/직경을 자동 결정
+  autoSize: boolean;
 }
 
 /** 개별 서포트 1개 — 접점(모델 표면)과 바닥(착지점)을 잇는 지지대 */
@@ -62,6 +65,8 @@ export interface SupportPoint {
   contact: { x: number; y: number; z: number };
   /** 착지점 — 빌드플레이트(Y=0) 또는 하부 모델 표면 (Babylon 월드 좌표) */
   base: { x: number; y: number; z: number };
+  /** contact 표면 외향 법선. 콘이 이 방향으로 기울어진다. 없으면 수직. */
+  normal?: { x: number; y: number; z: number };
 }
 
 /** 굵기 프리셋별 기본 직경값 (ChiTuBox 1.9.5 기준 근사) */
@@ -95,4 +100,5 @@ export const DEFAULT_SUPPORT_SETTINGS: SupportSettings = {
   gridStartHeight: 3.0,
   density: 95.0,
   overhangAngle: 45.0,
+  autoSize: false,
 };

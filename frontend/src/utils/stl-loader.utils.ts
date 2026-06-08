@@ -9,6 +9,11 @@ import type { Transform } from '@apptypes/stl.types';
  */
 const FLOOR_CONTACT_BAND = 1.0; // 바닥면 접촉으로 간주하는 높이 범위(mm)
 
+/** STL 모델 기본 색상 (미선택) — 연회색 배경에서 눈에 편한 차분한 세이지 틸 */
+export const STL_DEFAULT_COLOR = new Color3(0.42, 0.6, 0.56);
+/** STL 모델 선택 색상 — 기본 색과 뚜렷이 구분되는 밝은 앰버 */
+export const STL_SELECTED_COLOR = new Color3(0.95, 0.62, 0.2);
+
 class FloorContactMaterialPlugin extends MaterialPluginBase {
   constructor(material: Material) {
     super(material, 'FloorContact', 200, {});
@@ -125,9 +130,13 @@ export const loadSTLFile = async (
 
         // 기본 재질 설정
         const material = new StandardMaterial(`${fileName}_material`, scene);
-        // 연회색 배경에서 잘 보이면서 눈의 피로를 덜어주는 차분한 청록색(세이지 틸)
-        material.diffuseColor = new Color3(0.42, 0.6, 0.56);
+        // 미선택 기본 색상 (세이지 틸) — 선택 시에는 highlightMesh로 색을 바꾼다
+        material.diffuseColor = STL_DEFAULT_COLOR.clone();
         material.specularColor = new Color3(0.2, 0.2, 0.2);
+        // 단면도(clipPlane)로 잘렸을 때 모델 안쪽 면도 렌더링되도록 양면 그리기.
+        // 빈 껍데기 대신 두께가 있는 단면처럼 채워져 보인다.
+        material.backFaceCulling = false;
+        material.twoSidedLighting = true;
         // 바닥면에 닿는 부분을 STL 색상의 보색으로 표시
         new FloorContactMaterialPlugin(material);
         mesh.material = material;
@@ -140,10 +149,16 @@ export const loadSTLFile = async (
           dragPlaneNormal: new Vector3(0, 1, 0),
         });
         floorDragBehavior.useObjectOrientationForDragging = false; // 월드 기준 평면 고정
-        floorDragBehavior.detachCameraControls = false; // 카메라 제어와 분리
+        // 좌클릭 모델 위 = 바닥면 이동, 좌클릭 빈영역 = 카메라 회전.
+        // 모델 드래그 중에는 카메라 회전이 동시에 트리거되지 않도록 카메라 제어를 일시 분리한다.
+        floorDragBehavior.detachCameraControls = true;
         floorDragBehavior.moveAttached = false; // 위치는 아래에서 직접 제어
         floorDragBehavior.updateDragPlane = false; // 드래그 평면을 수평으로 고정
         floorDragBehavior.enabled = false; // 선택 시에만 활성화
+        // 자동 시작/종료를 사용한다 — 좌클릭 down 시 PointerDragBehavior 가 직접 startDrag,
+        // up 시 releaseDrag 한다. 우/휠 클릭은 STLViewer 의 가드(enabled=false 토글)로
+        // 차단되며, 단순 클릭은 onDrag 콜백 자체가 발동하지 않으므로 모델이 따라오지 않는다.
+        floorDragBehavior.startAndReleaseDragOnPointerEvents = true;
 
         // 드래그 시 X·Z(바닥면)만 이동 — mesh.position.y 는 절대 변경하지 않음
         const dragTargetMesh = mesh;
@@ -331,8 +346,22 @@ export const arrangeMeshesCentered = (meshes: Mesh[], gap: number): void => {
  */
 export const clampMeshAboveFloor = (mesh: Mesh): void => {
   mesh.computeWorldMatrix(true);
-  const minY = mesh.getBoundingInfo().boundingBox.minimumWorld.y;
-  if (minY < -0.0001) {
+  const bi = mesh.getBoundingInfo();
+  const lmin = bi.minimum;
+  const lmax = bi.maximum;
+  const wm = mesh.getWorldMatrix();
+  // Babylon 의 boundingBox.minimumWorld 가 회전 직후 갱신되지 않는 케이스가 있어,
+  // 8 개 로컬 코너를 worldMatrix 로 직접 변환해 가장 낮은 Y 를 계산한다.
+  const v = new Vector3();
+  let minY = Infinity;
+  const xs = [lmin.x, lmax.x];
+  const ys = [lmin.y, lmax.y];
+  const zs = [lmin.z, lmax.z];
+  for (const x of xs) for (const y of ys) for (const z of zs) {
+    Vector3.TransformCoordinatesFromFloatsToRef(x, y, z, wm, v);
+    if (v.y < minY) minY = v.y;
+  }
+  if (minY < -0.0001 && minY !== Infinity) {
     mesh.position.y -= minY;
     mesh.computeWorldMatrix(true);
   }
@@ -376,14 +405,11 @@ export const setMeshColor = (mesh: Mesh, color: Color3): void => {
 };
 
 /**
- * 메쉬 하이라이트 (선택 시)
+ * 메쉬 하이라이트 — 선택 시 선택 색상, 미선택 시 기본 색상으로 되돌린다.
+ * 모듈 상수를 그대로 넘기면 머티리얼 간 색상 참조가 공유되므로 복제해 전달한다.
  */
 export const highlightMesh = (mesh: Mesh, highlight: boolean): void => {
-  if (highlight) {
-    setMeshColor(mesh, new Color3(0.3, 0.7, 1.0)); // 파란색
-  } else {
-    setMeshColor(mesh, new Color3(0.8, 0.8, 0.9)); // 기본 회색
-  }
+  setMeshColor(mesh, (highlight ? STL_SELECTED_COLOR : STL_DEFAULT_COLOR).clone());
 };
 
 /**
@@ -393,15 +419,3 @@ export const setMeshVisibility = (mesh: Mesh, visible: boolean): void => {
   mesh.isVisible = visible;
 };
 
-/**
- * 메쉬 투명도 설정
- */
-export const setMeshOpacity = (mesh: Mesh, alpha: number): void => {
-  // Use mesh.visibility for simpler and more reliable transparency
-  mesh.visibility = alpha;
-
-  // Also set material alpha if available, just in case
-  if (mesh.material instanceof StandardMaterial) {
-    mesh.material.alpha = alpha;
-  }
-};

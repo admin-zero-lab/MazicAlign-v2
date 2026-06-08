@@ -218,14 +218,17 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
       <div className="mb-6">
         <h4 className="text-sm font-medium text-gray-700 mb-3">Position</h4>
         <div className="space-y-2">
-          {(['x', 'y', 'z'] as const).map((axis) => (
+          {(['x', 'y', 'z'] as const).map((axis) => {
+            // Z(높이)는 음수 입력 금지 — 모델이 빌드플레이트 아래로 내려가지 않게.
+            const min = axis === 'z' ? 0 : -100;
+            return (
             <div key={`translation-${axis}`} className="flex items-center space-x-3">
               <label className="w-4 text-sm font-medium text-gray-600 uppercase">
                 {axis}
               </label>
               <input
                 type="range"
-                min="-100"
+                min={min}
                 max="100"
                 step="0.1"
                 value={translation[axis]}
@@ -238,18 +241,20 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
               />
               <input
                 type="number"
+                min={min}
                 value={translation[axis].toFixed(1)}
-                onChange={(e) => handleTranslationChange(axis, parseFloat(e.target.value) || 0)}
-                onBlur={(e) => handleTranslationCommit(axis, parseFloat(e.target.value) || 0)}
+                onChange={(e) => handleTranslationChange(axis, Math.max(min, parseFloat(e.target.value) || 0))}
+                onBlur={(e) => handleTranslationCommit(axis, Math.max(min, parseFloat(e.target.value) || 0))}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
-                    handleTranslationCommit(axis, parseFloat((e.target as HTMLInputElement).value) || 0);
+                    handleTranslationCommit(axis, Math.max(min, parseFloat((e.target as HTMLInputElement).value) || 0));
                   }
                 }}
                 className="w-16 px-2 py-1 text-sm border border-gray-300 rounded"
               />
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 

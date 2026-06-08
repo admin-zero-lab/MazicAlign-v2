@@ -153,6 +153,17 @@ export const useSTLFiles = (projectId?: string) => {
   };
 
   /**
+   * STL 미리보기 해제 — previewTransform을 비워 currentTransform 위치로 되돌린다.
+   */
+  const clearPreview = (stlId: string) => {
+    setSTLFiles((prev) =>
+      prev.map((file) =>
+        file.stlId === stlId ? { ...file, previewTransform: undefined } : file
+      )
+    );
+  };
+
+  /**
    * STL Transform 직접 설정 (로그 생성 없이 currentTransform 갱신)
    * Undo/Redo로 특정 히스토리 시점의 변환 상태를 복원할 때 사용한다.
    */
@@ -215,6 +226,7 @@ export const useSTLFiles = (projectId?: string) => {
     deleteFile,
     adjustSTL,
     previewSTL,
+    clearPreview,
     setTransform,
     duplicateFile,
   };
