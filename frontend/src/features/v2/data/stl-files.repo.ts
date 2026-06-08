@@ -56,6 +56,31 @@ export async function createStlFile(
   return stlFile;
 }
 
+export async function updateStlFile(
+  id: string,
+  patch: Partial<Omit<STLFileV2, "id" | "projectId" | "blob" | "addedAt">>,
+): Promise<STLFileV2> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_STL_FILES, "readwrite");
+    const store = tx.objectStore(STORE_STL_FILES);
+    const getReq = store.get(id);
+    let next: STLFileV2 | null = null;
+    getReq.onsuccess = () => {
+      const existing = getReq.result as STLFileV2 | undefined;
+      if (!existing) {
+        tx.abort();
+        reject(new Error(`STL not found: ${id}`));
+        return;
+      }
+      next = { ...existing, ...patch };
+      store.put(next);
+    };
+    tx.oncomplete = () => resolve(next as STLFileV2);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 export async function deleteStlFile(id: string): Promise<void> {
   const db = await openDb();
   return new Promise((resolve, reject) => {

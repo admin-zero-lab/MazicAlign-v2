@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import * as repo from "../data/stl-files.repo";
 import type { STLFileV2 } from "../types/stl";
+import type { TransformV2 } from "../types/transform";
 
 /**
  * 한 프로젝트의 STL 파일 목록과 add / remove.
@@ -50,5 +51,13 @@ export function useStlFilesV2(projectId: string | undefined) {
     [refresh],
   );
 
-  return { files, loading, error, refresh, add, remove };
+  const updateTransform = useCallback(
+    async (id: string, transform: TransformV2) => {
+      await repo.updateStlFile(id, { transform });
+      await refresh();
+    },
+    [refresh],
+  );
+
+  return { files, loading, error, refresh, add, remove, updateTransform };
 }

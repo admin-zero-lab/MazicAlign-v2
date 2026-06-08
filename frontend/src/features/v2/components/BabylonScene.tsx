@@ -19,6 +19,8 @@ import {
 
 import { loadStlIntoScene } from "../utils/stl-loader";
 import { applyOverhangColors } from "../utils/overhang";
+import { applyTransformToMesh } from "../utils/transform";
+import { IDENTITY_TRANSFORM, type TransformV2 } from "../types/transform";
 import {
   addBuildPlateAndGrid,
   type SceneFurniture,
@@ -54,6 +56,11 @@ interface BabylonSceneProps {
 export interface BabylonSceneHandle {
   setView: (preset: ViewPreset) => void;
   fit: () => void;
+  /**
+   * Transform 드래그 미리보기. DB 저장 없이 메쉬에 즉시 반영.
+   * TransformPanel 의 onPreview 가 호출한다.
+   */
+  previewTransform: (id: string, t: TransformV2) => void;
 }
 
 const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
@@ -223,6 +230,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
               return null;
             }
             applyOverhangColors(mesh, overhangRef.current);
+            applyTransformToMesh(mesh, f.transform ?? IDENTITY_TRANSFORM);
             mesh.isPickable = true;
             meshMapRef.current.set(f.id, mesh);
             return mesh;
@@ -241,6 +249,16 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         }
         refreshHighlight();
       });
+
+      // 기존 메쉬들은 transform 변경 가능성 체크
+      for (const f of files) {
+        if (currentIds.has(f.id)) {
+          const mesh = meshMapRef.current.get(f.id);
+          if (mesh) {
+            applyTransformToMesh(mesh, f.transform ?? IDENTITY_TRANSFORM);
+          }
+        }
+      }
 
       return () => {
         cancelled = true;
@@ -278,6 +296,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           } else {
             resetCameraOnPlate(camera, PLATE_WIDTH_MM, PLATE_DEPTH_MM);
           }
+        },
+        previewTransform(id, t) {
+          const mesh = meshMapRef.current.get(id);
+          if (mesh) applyTransformToMesh(mesh, t);
         },
       }),
       [],
