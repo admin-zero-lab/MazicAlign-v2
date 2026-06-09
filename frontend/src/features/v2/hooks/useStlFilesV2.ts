@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import * as repo from "../data/stl-files.repo";
+import * as supportRepo from "../data/supports.repo";
 import type { STLFileV2 } from "../types/stl";
 import type { TransformV2 } from "../types/transform";
 
@@ -45,6 +46,8 @@ export function useStlFilesV2(projectId: string | undefined) {
 
   const remove = useCallback(
     async (id: string) => {
+      // 서포트 cascade — STL 삭제 시 그 위의 서포트도 같이 지운다.
+      await supportRepo.deleteSupportsByStl(id);
       await repo.deleteStlFile(id);
       await refresh();
     },

@@ -41,9 +41,6 @@ export async function loadStlIntoScene(
   const mesh = meshes[0];
   mesh.name = meshName;
 
-  // 진단: STL 로더가 import 한 직후 vertex 의 AABB (회전 전).
-  logAabb(mesh, `${meshName} [raw import]`);
-
   // 0) Babylon STL 로더가 face normal 을 (0,0,0) 영벡터로 import
   //    하는 STL (cylinder.STL 등) 에 대비해 vertex normal 을
   //    강제 재계산. 이미 정상 normal 이 있어도 멱등.
@@ -53,14 +50,8 @@ export async function loadStlIntoScene(
   mesh.rotation.x = -Math.PI / 2;
   mesh.bakeCurrentTransformIntoVertices();
 
-  // 진단: 회전 bake 후 AABB.
-  logAabb(mesh, `${meshName} [after rotate]`);
-
   // 2) 빌드플레이트에 정렬 (XZ center, Y base=0).
   alignMeshToPlate(mesh);
-
-  // 진단: plate align 후 AABB. 정상이라면 Y minimum 은 0 근처.
-  logAabb(mesh, `${meshName} [aligned]`);
 
   // 3) Material.
   const mat = new StandardMaterial(`${meshName}-mat`, scene);
@@ -73,18 +64,6 @@ export async function loadStlIntoScene(
   mesh.material = mat;
 
   return mesh;
-}
-
-function logAabb(mesh: Mesh, tag: string): void {
-  mesh.refreshBoundingInfo();
-  const bb = mesh.getBoundingInfo().boundingBox;
-  // eslint-disable-next-line no-console
-  console.log(
-    `[v2] ${tag} AABB ` +
-      `X(${bb.minimum.x.toFixed(2)}..${bb.maximum.x.toFixed(2)}) ` +
-      `Y(${bb.minimum.y.toFixed(2)}..${bb.maximum.y.toFixed(2)}) ` +
-      `Z(${bb.minimum.z.toFixed(2)}..${bb.maximum.z.toFixed(2)})`,
-  );
 }
 
 /**

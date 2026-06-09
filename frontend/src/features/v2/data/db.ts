@@ -7,10 +7,11 @@
  */
 
 export const DB_NAME = "resinforge";
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 
 export const STORE_PROJECTS = "projects";
 export const STORE_STL_FILES = "stl_files";
+export const STORE_SUPPORTS = "supports";
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -43,6 +44,15 @@ export function openDb(): Promise<IDBDatabase> {
         });
         stlStore.createIndex("by_project", "projectId");
         stlStore.createIndex("by_addedAt", "addedAt");
+      }
+
+      // v2 → v3: supports 스토어
+      if (oldVersion < 3) {
+        const supportStore = db.createObjectStore(STORE_SUPPORTS, {
+          keyPath: "id",
+        });
+        supportStore.createIndex("by_project", "projectId");
+        supportStore.createIndex("by_stl", "stlId");
       }
     };
 
@@ -99,9 +109,13 @@ export async function withStore<T>(
 export async function _wipeAll(): Promise<void> {
   const db = await openDb();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction([STORE_PROJECTS, STORE_STL_FILES], "readwrite");
+    const tx = db.transaction(
+      [STORE_PROJECTS, STORE_STL_FILES, STORE_SUPPORTS],
+      "readwrite",
+    );
     tx.objectStore(STORE_PROJECTS).clear();
     tx.objectStore(STORE_STL_FILES).clear();
+    tx.objectStore(STORE_SUPPORTS).clear();
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });

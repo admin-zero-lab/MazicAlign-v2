@@ -4,6 +4,7 @@
 export * from "./support";
 export { useProjectsV2, useProjectV2 } from "./hooks/useProjectsV2";
 export { useStlFilesV2 } from "./hooks/useStlFilesV2";
+export { useSupportsV2 } from "./hooks/useSupportsV2";
 export {
   useShortcutsListener,
   useShortcutHandler,
@@ -14,6 +15,7 @@ export type {
   ProjectV2CreateInput,
 } from "./types/project";
 export type { STLFileV2 } from "./types/stl";
+export type { SupportPointV2 } from "./support/types";
 
 export { default as ProjectsV2Page } from "./pages/ProjectsV2Page";
 export { default as ViewerV2Page } from "./pages/ViewerV2Page";

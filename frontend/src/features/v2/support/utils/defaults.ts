@@ -12,6 +12,7 @@ export const DEFAULT_SUPPORT_PARAMS: SupportParams = {
   tipTransitionMm: 1.0,
   baseTransitionMm: 3.0,
   autoSizeTrunk: false,
+  contactSpacingMm: 4.0,
 };
 
 /**
@@ -27,4 +28,5 @@ export const SUPPORT_PARAM_LIMITS: Record<
   baseDiameterMm: { min: 0.5, max: 5.0, step: 0.1, unit: "mm", label: "바닥 지름" },
   tipTransitionMm: { min: 0.2, max: 5.0, step: 0.1, unit: "mm", label: "팁 전이 길이" },
   baseTransitionMm: { min: 0.5, max: 10.0, step: 0.1, unit: "mm", label: "바닥 전이 길이" },
+  contactSpacingMm: { min: 1.5, max: 15.0, step: 0.5, unit: "mm", label: "접점 간격" },
 };
