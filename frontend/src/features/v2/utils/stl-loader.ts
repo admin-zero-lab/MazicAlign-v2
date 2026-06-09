@@ -12,10 +12,11 @@ import "@babylonjs/loaders/STL";
  * STL Blob → Babylon Mesh.
  *
  *  1. STL Z-up → Babylon Y-up: X 축 -90° 회전을 vertex 에 베이크.
- *  2. AABB 중심을 local origin 으로 이동 (vertex shift) — Gizmo 가
- *     mesh.position 위치에 표시되므로 모델 중심에 정확히 떨어진다.
- *     이동량(centerOffset) 은 vertex 에 베이크되므로 mesh.position
- *     은 (0,0,0) 으로 시작한다.
+ *  2. 빌드플레이트 정렬 (vertex shift):
+ *       · X, Z = AABB center (모델이 플레이트 한가운데로)
+ *       · Y    = AABB minimum (base 가 Y=0 → 바닥에 정확히 일치)
+ *     mesh.position 은 (0,0,0) 으로 시작 → Transform Reset 시에도
+ *     자동으로 다시 바닥에 일치한다 (별도 처리 불필요).
  *  3. 흰색 StandardMaterial 적용 → vertex color 그대로 보임.
  */
 export async function loadStlIntoScene(
@@ -44,8 +45,8 @@ export async function loadStlIntoScene(
   mesh.rotation.x = -Math.PI / 2;
   mesh.bakeCurrentTransformIntoVertices();
 
-  // 2) AABB 중심을 local origin 으로 이동.
-  centerMeshOnOrigin(mesh);
+  // 2) 빌드플레이트에 정렬 (XZ center, Y base=0).
+  alignMeshToPlate(mesh);
 
   // 3) Material.
   const mat = new StandardMaterial(`${meshName}-mat`, scene);
@@ -58,14 +59,16 @@ export async function loadStlIntoScene(
 }
 
 /**
- * Mesh 의 vertex 를 AABB 중심이 (0,0,0) 이 되도록 shift 한다.
+ * Mesh 의 vertex 를 빌드플레이트 정렬한다.
+ *   · XZ: AABB center → 0   (모델이 플레이트 한가운데)
+ *   · Y : AABB minimum → 0  (base 가 정확히 Y=0)
  * Normal 은 그대로 (translation 은 normal 에 영향 없음).
  */
-function centerMeshOnOrigin(mesh: Mesh): void {
+function alignMeshToPlate(mesh: Mesh): void {
   mesh.refreshBoundingInfo();
   const bb = mesh.getBoundingInfo().boundingBox;
   const dx = bb.center.x;
-  const dy = bb.center.y;
+  const dy = bb.minimum.y;
   const dz = bb.center.z;
   if (dx === 0 && dy === 0 && dz === 0) return;
 
