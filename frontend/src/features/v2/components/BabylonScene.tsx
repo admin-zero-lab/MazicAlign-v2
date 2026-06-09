@@ -9,12 +9,15 @@ import {
   Color3,
   Color4,
   Engine,
-  GizmoManager,
   HemisphericLight,
   HighlightLayer,
   Mesh,
   PointerEventTypes,
+  PositionGizmo,
+  RotationGizmo,
+  ScaleGizmo,
   Scene,
+  UtilityLayerRenderer,
   Vector3,
 } from "@babylonjs/core";
 
@@ -90,10 +93,15 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     const meshMapRef = useRef<Map<string, Mesh>>(new Map());
     const furnitureRef = useRef<SceneFurniture | null>(null);
     const highlightRef = useRef<HighlightLayer | null>(null);
-    const gizmoManagerRef = useRef<GizmoManager | null>(null);
+    const utilityLayerRef = useRef<UtilityLayerRenderer | null>(null);
+    const positionGizmoRef = useRef<PositionGizmo | null>(null);
+    const rotationGizmoRef = useRef<RotationGizmo | null>(null);
+    const scaleGizmoRef = useRef<ScaleGizmo | null>(null);
     const gizmoDragStartRef = useRef<{ id: string; t: TransformV2 } | null>(
       null,
     );
+    const gizmoModeRef = useRef<GizmoMode>(gizmoMode);
+    gizmoModeRef.current = gizmoMode;
 
     // 최신 값을 effect 바깥에서 참조할 수 있게 ref 로 동기화.
     const overhangRef = useRef<number>(overhangAngleDeg);
@@ -113,6 +121,22 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         const mesh = meshMapRef.current.get(id);
         if (mesh) hl.addMesh(mesh, HIGHLIGHT_COLOR);
       }
+    }
+
+    function syncGizmo() {
+      const pg = positionGizmoRef.current;
+      const rg = rotationGizmoRef.current;
+      const sg = scaleGizmoRef.current;
+      if (!pg || !rg || !sg) return;
+
+      const sel = Array.from(selectedRef.current);
+      const single = sel.length === 1 ? sel[0] : null;
+      const mesh = single ? meshMapRef.current.get(single) ?? null : null;
+      const mode = gizmoModeRef.current;
+
+      pg.attachedMesh = mode === "translate" ? mesh : null;
+      rg.attachedMesh = mode === "rotate" ? mesh : null;
+      sg.attachedMesh = mode === "scale" ? mesh : null;
     }
 
     // 1) 씬 부트스트랩
@@ -170,16 +194,15 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       hl.outerGlow = true;
       highlightRef.current = hl;
 
-      // Gizmo: 처음에 모든 종류를 enable→disable 로 한 번 인스턴스화
-      // 해두면 이후 모드 전환이 가볍다. 콜백 등록도 이때 한 번에.
-      const gm = new GizmoManager(scene);
-      gm.usePointerToAttachGizmos = false; // 직접 attachToMesh 로만 제어
-      gm.positionGizmoEnabled = true;
-      gm.rotationGizmoEnabled = true;
-      gm.scaleGizmoEnabled = true;
-      gm.positionGizmoEnabled = false;
-      gm.rotationGizmoEnabled = false;
-      gm.scaleGizmoEnabled = false;
+      // Gizmo: UtilityLayer 위에 세 종류를 한 번씩만 만들고 영속화한다.
+      // 모드 전환은 attachedMesh = null/target 로만 처리 → 인스턴스
+      // 재생성·콜백 재바인딩 비용이 없다.
+      const utility = new UtilityLayerRenderer(scene);
+      utility.utilityLayerScene.autoClearDepthAndStencil = false;
+
+      const positionGizmo = new PositionGizmo(utility);
+      const rotationGizmo = new RotationGizmo(utility);
+      const scaleGizmo = new ScaleGizmo(utility);
 
       const onDragStart = () => {
         const sel = Array.from(selectedRef.current);
@@ -198,14 +221,15 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         const end = readMeshTransform(mesh);
         onGizmoCommitRef.current(started.id, started.t, end);
       };
-      [gm.gizmos.positionGizmo, gm.gizmos.rotationGizmo, gm.gizmos.scaleGizmo]
-        .forEach((giz) => {
-          if (!giz) return;
-          giz.onDragStartObservable.add(onDragStart);
-          giz.onDragEndObservable.add(onDragEnd);
-        });
+      [positionGizmo, rotationGizmo, scaleGizmo].forEach((giz) => {
+        giz.onDragStartObservable.add(onDragStart);
+        giz.onDragEndObservable.add(onDragEnd);
+      });
 
-      gizmoManagerRef.current = gm;
+      utilityLayerRef.current = utility;
+      positionGizmoRef.current = positionGizmo;
+      rotationGizmoRef.current = rotationGizmo;
+      scaleGizmoRef.current = scaleGizmo;
 
       // 클릭 픽업: 좌클릭으로 단순 클릭 (드래그 없는) 시 mesh 픽.
       // 메쉬 위면 선택, 빈 공간이면 선택 해제.
@@ -242,8 +266,14 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
 
       return () => {
         window.removeEventListener("resize", onResize);
-        gizmoManagerRef.current?.dispose();
-        gizmoManagerRef.current = null;
+        positionGizmoRef.current?.dispose();
+        rotationGizmoRef.current?.dispose();
+        scaleGizmoRef.current?.dispose();
+        positionGizmoRef.current = null;
+        rotationGizmoRef.current = null;
+        scaleGizmoRef.current = null;
+        utilityLayerRef.current?.dispose();
+        utilityLayerRef.current = null;
         for (const mesh of meshMapRef.current.values()) {
           mesh.dispose();
         }
@@ -308,6 +338,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           );
         }
         refreshHighlight();
+        // load 가 끝난 뒤에야 mesh 가 존재하므로 여기서 다시 attach.
+        syncGizmo();
       });
 
       // 기존 메쉬들은 transform 변경 가능성 체크
@@ -338,22 +370,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedIds]);
 
-    // 5) Gizmo: 단일 선택 + 모드 ≠ none 일 때만 attach + 해당 gizmo enable
+    // 5) Gizmo: 선택 / 모드 / files 변경 시 attach 재계산
     useEffect(() => {
-      const gm = gizmoManagerRef.current;
-      if (!gm) return;
-
-      const single =
-        selectedIds.size === 1 ? Array.from(selectedIds)[0] : null;
-      const mesh = single ? meshMapRef.current.get(single) ?? null : null;
-
-      const wantGizmo = mesh !== null && gizmoMode !== "none";
-
-      gm.positionGizmoEnabled = wantGizmo && gizmoMode === "translate";
-      gm.rotationGizmoEnabled = wantGizmo && gizmoMode === "rotate";
-      gm.scaleGizmoEnabled = wantGizmo && gizmoMode === "scale";
-
-      gm.attachToMesh(wantGizmo ? mesh : null);
+      syncGizmo();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedIds, gizmoMode, files]);
 
     // 5) 외부 ref API
