@@ -12,6 +12,7 @@ import {
   HemisphericLight,
   HighlightLayer,
   Mesh,
+  PointerDragBehavior,
   PointerEventTypes,
   PositionGizmo,
   RotationGizmo,
@@ -121,6 +122,34 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         const mesh = meshMapRef.current.get(id);
         if (mesh) hl.addMesh(mesh, HIGHLIGHT_COLOR);
       }
+    }
+
+    /**
+     * 모델 위 좌클릭+드래그로 XZ 평면 이동.
+     * Y 는 모델의 현재 높이에서 고정 (수직 이동은 Gizmo/슬라이더로).
+     */
+    function attachDragBehavior(mesh: Mesh, fileId: string) {
+      const drag = new PointerDragBehavior({
+        dragPlaneNormal: new Vector3(0, 1, 0),
+      });
+      drag.useObjectOrientationForDragging = false;
+      drag.moveAttached = true;
+
+      drag.onDragStartObservable.add(() => {
+        gizmoDragStartRef.current = {
+          id: fileId,
+          t: readMeshTransform(mesh),
+        };
+      });
+      drag.onDragEndObservable.add(() => {
+        const started = gizmoDragStartRef.current;
+        gizmoDragStartRef.current = null;
+        if (!started) return;
+        const end = readMeshTransform(mesh);
+        onGizmoCommitRef.current(started.id, started.t, end);
+      });
+
+      mesh.addBehavior(drag);
     }
 
     function syncGizmo() {
@@ -332,6 +361,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
             applyOverhangColors(mesh, overhangRef.current);
             applyTransformToMesh(mesh, f.transform ?? IDENTITY_TRANSFORM);
             mesh.isPickable = true;
+            attachDragBehavior(mesh, f.id);
             meshMapRef.current.set(f.id, mesh);
             return mesh;
           } catch (e) {

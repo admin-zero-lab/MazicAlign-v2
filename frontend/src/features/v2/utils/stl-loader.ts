@@ -4,18 +4,19 @@ import {
   Scene,
   SceneLoader,
   StandardMaterial,
+  VertexBuffer,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/STL";
 
 /**
  * STL Blob → Babylon Mesh.
  *
- * STL 좌표계 (Z-up) 를 Babylon (Y-up) 에 맞추기 위해 X 축 -90° 회전
- * 을 vertex 에 베이크한다. 베이크 후 normal 도 갱신되므로 오버행
- * 판정에서 -Y 만 보면 된다.
- *
- * material 은 흰색 StandardMaterial 로 잡아 vertex color 가 그대로
- * 표면에 보이게 한다.
+ *  1. STL Z-up → Babylon Y-up: X 축 -90° 회전을 vertex 에 베이크.
+ *  2. AABB 중심을 local origin 으로 이동 (vertex shift) — Gizmo 가
+ *     mesh.position 위치에 표시되므로 모델 중심에 정확히 떨어진다.
+ *     이동량(centerOffset) 은 vertex 에 베이크되므로 mesh.position
+ *     은 (0,0,0) 으로 시작한다.
+ *  3. 흰색 StandardMaterial 적용 → vertex color 그대로 보임.
  */
 export async function loadStlIntoScene(
   scene: Scene,
@@ -39,10 +40,14 @@ export async function loadStlIntoScene(
   const mesh = meshes[0];
   mesh.name = meshName;
 
-  // STL Z-up → Babylon Y-up: X 축 -90° 회전 후 vertex 에 베이크.
+  // 1) STL Z-up → Babylon Y-up.
   mesh.rotation.x = -Math.PI / 2;
   mesh.bakeCurrentTransformIntoVertices();
 
+  // 2) AABB 중심을 local origin 으로 이동.
+  centerMeshOnOrigin(mesh);
+
+  // 3) Material.
   const mat = new StandardMaterial(`${meshName}-mat`, scene);
   mat.diffuseColor = new Color3(1, 1, 1);
   mat.specularColor = new Color3(0.12, 0.12, 0.12);
@@ -50,4 +55,29 @@ export async function loadStlIntoScene(
   mesh.material = mat;
 
   return mesh;
+}
+
+/**
+ * Mesh 의 vertex 를 AABB 중심이 (0,0,0) 이 되도록 shift 한다.
+ * Normal 은 그대로 (translation 은 normal 에 영향 없음).
+ */
+function centerMeshOnOrigin(mesh: Mesh): void {
+  mesh.refreshBoundingInfo();
+  const bb = mesh.getBoundingInfo().boundingBox;
+  const dx = bb.center.x;
+  const dy = bb.center.y;
+  const dz = bb.center.z;
+  if (dx === 0 && dy === 0 && dz === 0) return;
+
+  const positions = mesh.getVerticesData(VertexBuffer.PositionKind);
+  if (!positions) return;
+
+  const shifted = new Float32Array(positions.length);
+  for (let i = 0; i < positions.length; i += 3) {
+    shifted[i] = positions[i] - dx;
+    shifted[i + 1] = positions[i + 1] - dy;
+    shifted[i + 2] = positions[i + 2] - dz;
+  }
+  mesh.setVerticesData(VertexBuffer.PositionKind, shifted, true);
+  mesh.refreshBoundingInfo();
 }
