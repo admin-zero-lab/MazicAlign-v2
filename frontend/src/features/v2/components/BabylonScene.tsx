@@ -197,12 +197,22 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       // Gizmo: UtilityLayer 위에 세 종류를 한 번씩만 만들고 영속화한다.
       // 모드 전환은 attachedMesh = null/target 로만 처리 → 인스턴스
       // 재생성·콜백 재바인딩 비용이 없다.
+      //
+      // ⚠️ autoClearDepthAndStencil 은 기본값(true) 유지. false 로
+      // 두면 메인 scene 의 depth buffer 가 그대로 남아 gizmo 가
+      // 모델 뒤로 가려진다.
       const utility = new UtilityLayerRenderer(scene);
-      utility.utilityLayerScene.autoClearDepthAndStencil = false;
 
       const positionGizmo = new PositionGizmo(utility);
       const rotationGizmo = new RotationGizmo(utility);
       const scaleGizmo = new ScaleGizmo(utility);
+
+      // 모델이 작을 때 (10mm 단위) 화살표가 묻혀 보이는 걸 막기 위해
+      // scaleRatio 를 키운다.
+      const SCALE = 1.8;
+      positionGizmo.scaleRatio = SCALE;
+      rotationGizmo.scaleRatio = SCALE;
+      scaleGizmo.scaleRatio = SCALE;
 
       const onDragStart = () => {
         const sel = Array.from(selectedRef.current);
