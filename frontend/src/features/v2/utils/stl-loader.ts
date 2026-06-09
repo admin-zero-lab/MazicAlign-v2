@@ -52,6 +52,9 @@ export async function loadStlIntoScene(
   const mat = new StandardMaterial(`${meshName}-mat`, scene);
   mat.diffuseColor = new Color3(1, 1, 1);
   mat.specularColor = new Color3(0.12, 0.12, 0.12);
+  // scene.ambientColor 가 적용되려면 material 측의 ambientColor 가
+  // 0 이 아니어야 한다 (둘은 곱셈으로 결합).
+  mat.ambientColor = new Color3(1, 1, 1);
   mat.backFaceCulling = true;
   mesh.material = mat;
 

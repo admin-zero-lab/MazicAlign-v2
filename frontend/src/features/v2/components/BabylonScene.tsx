@@ -179,6 +179,9 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       });
       const scene = new Scene(engine);
       scene.clearColor = new Color4(0.94, 0.95, 0.97, 1);
+      // 셰이딩이 0 에 가까운 면 (예: cylinder 옆면) 이 새카맣게
+      // 보이지 않도록 ambient 를 약간 둔다.
+      scene.ambientColor = new Color3(0.45, 0.46, 0.5);
 
       const camera = new ArcRotateCamera(
         "cam",
@@ -196,10 +199,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
 
       const lightTop = new HemisphericLight(
         "lightTop",
-        new Vector3(0, 1, 0.3),
+        new Vector3(0.2, 1, 0.3),
         scene,
       );
-      lightTop.intensity = 0.85;
+      lightTop.intensity = 0.7;
       lightTop.diffuse = new Color3(1, 1, 1);
       lightTop.specular = new Color3(0.1, 0.1, 0.1);
 
@@ -208,7 +211,25 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         new Vector3(0, -1, 0),
         scene,
       );
-      lightBottom.intensity = 0.25;
+      lightBottom.intensity = 0.2;
+
+      // 측면 ‘wrap-around’ 보강 — 두 광이 거의 직교라 옆면이 새카맣게
+      // 보이는 경우 (cylinder · 둥근 모델) 대응.
+      const lightSideA = new HemisphericLight(
+        "lightSideA",
+        new Vector3(-1, 0.3, 0.4),
+        scene,
+      );
+      lightSideA.intensity = 0.4;
+      lightSideA.specular = new Color3(0.05, 0.05, 0.05);
+
+      const lightSideB = new HemisphericLight(
+        "lightSideB",
+        new Vector3(1, 0.3, -0.4),
+        scene,
+      );
+      lightSideB.intensity = 0.4;
+      lightSideB.specular = new Color3(0.05, 0.05, 0.05);
 
       furnitureRef.current = addBuildPlateAndGrid(scene, {
         widthMm: PLATE_WIDTH_MM,
