@@ -5,6 +5,14 @@ import {
 } from "../utils/defaults";
 
 interface SupportParamsPanelProps {
+  /** 자동 생성 동작. 없으면 버튼 비활성. */
+  onAutoGenerate?: () => void;
+  /** 전부 삭제. 없으면 버튼 비활성. */
+  onClearAll?: () => void;
+  /** 현재 등록된 서포트 점 수. */
+  supportCount?: number;
+  /** 자동 생성 진행 중 표시. */
+  busy?: boolean;
   className?: string;
 }
 
@@ -15,6 +23,10 @@ interface SupportParamsPanelProps {
  * 자동 생성 / 수동 편집도 같은 스토어를 본다.
  */
 const SupportParamsPanel: React.FC<SupportParamsPanelProps> = ({
+  onAutoGenerate,
+  onClearAll,
+  supportCount = 0,
+  busy = false,
   className = "",
 }) => {
   const params = useSupportParamsStore((s) => s.params);
@@ -65,6 +77,31 @@ const SupportParamsPanel: React.FC<SupportParamsPanelProps> = ({
             onChange={(v) => setParam(key, v)}
           />
         ))}
+      </div>
+
+      <div className="mt-5 pt-4 border-t border-gray-200">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm font-medium text-gray-700">서포트</span>
+          <span className="text-xs text-gray-500">
+            현재 {supportCount} 개
+          </span>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={onAutoGenerate}
+            disabled={!onAutoGenerate || busy}
+            className="flex-1 px-3 py-2 text-sm bg-primary-600 text-white rounded hover:bg-primary-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {busy ? "생성 중…" : "자동 생성"}
+          </button>
+          <button
+            onClick={onClearAll}
+            disabled={!onClearAll || supportCount === 0 || busy}
+            className="px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            전부 삭제
+          </button>
+        </div>
       </div>
     </div>
   );

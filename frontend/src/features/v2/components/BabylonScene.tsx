@@ -26,6 +26,12 @@ import { loadStlIntoScene } from "../utils/stl-loader";
 import { applyOverhangColors } from "../utils/overhang";
 import { applyTransformToMesh, readMeshTransform } from "../utils/transform";
 import { IDENTITY_TRANSFORM, type TransformV2 } from "../types/transform";
+import {
+  createSupportMaterial,
+  createSupportMesh,
+} from "../utils/support-render";
+import { autoGenerateSupportPoints } from "../support/utils/auto-generate";
+import type { SupportParams, SupportPointV2 } from "../support/types";
 
 export type GizmoMode = "none" | "translate" | "rotate" | "scale";
 import {
@@ -61,6 +67,10 @@ interface BabylonSceneProps {
   gizmoMode: GizmoMode;
   /** Gizmo 드래그가 끝났을 때 commit. (start, end) 가 다르면 DB+undo. */
   onGizmoCommit: (id: string, start: TransformV2, end: TransformV2) => void;
+  /** 프로젝트의 서포트 점. 추가·삭제 시 자동 동기화. */
+  supports: SupportPointV2[];
+  /** 서포트 굵기 등 시각화에 쓰는 파라미터. */
+  supportParams: SupportParams;
   className?: string;
 }
 
@@ -72,6 +82,14 @@ export interface BabylonSceneHandle {
    * TransformPanel 의 onPreview 가 호출한다.
    */
   previewTransform: (id: string, t: TransformV2) => void;
+  /**
+   * 모든 STL 메쉬에 대해 자동 서포트 점을 생성해서 반환한다.
+   * 저장은 호출 측에서 IndexedDB 에 commit.
+   */
+  generateAutoSupports: (
+    projectId: string,
+    params: SupportParams,
+  ) => SupportPointV2[];
 }
 
 const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
@@ -83,6 +101,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       overhangAngleDeg,
       gizmoMode,
       onGizmoCommit,
+      supports,
+      supportParams,
       className = "",
     },
     ref,
@@ -92,6 +112,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     const sceneRef = useRef<Scene | null>(null);
     const cameraRef = useRef<ArcRotateCamera | null>(null);
     const meshMapRef = useRef<Map<string, Mesh>>(new Map());
+    const supportMeshMapRef = useRef<Map<string, Mesh>>(new Map());
+    const supportMaterialRef = useRef<ReturnType<
+      typeof createSupportMaterial
+    > | null>(null);
     const furnitureRef = useRef<SceneFurniture | null>(null);
     const highlightRef = useRef<HighlightLayer | null>(null);
     const utilityLayerRef = useRef<UtilityLayerRenderer | null>(null);
@@ -236,6 +260,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         depthMm: PLATE_DEPTH_MM,
       });
 
+      supportMaterialRef.current = createSupportMaterial(scene);
+
       const hl = new HighlightLayer("v2_highlight", scene, {
         blurHorizontalSize: 0.6,
         blurVerticalSize: 0.6,
@@ -334,6 +360,12 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         scaleGizmoRef.current = null;
         utilityLayerRef.current?.dispose();
         utilityLayerRef.current = null;
+        for (const sm of supportMeshMapRef.current.values()) {
+          sm.dispose();
+        }
+        supportMeshMapRef.current.clear();
+        supportMaterialRef.current?.dispose();
+        supportMaterialRef.current = null;
         for (const mesh of meshMapRef.current.values()) {
           mesh.dispose();
         }
@@ -425,6 +457,29 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       }
     }, [overhangAngleDeg]);
 
+    // 3.5) 서포트 점 동기화 — files 와 같은 방식 (신규는 add, 사라진 건 dispose)
+    useEffect(() => {
+      const scene = sceneRef.current;
+      const mat = supportMaterialRef.current;
+      if (!scene || !mat) return;
+
+      const currentIds = new Set(supportMeshMapRef.current.keys());
+      const nextIds = new Set(supports.map((s) => s.id));
+
+      for (const id of currentIds) {
+        if (!nextIds.has(id)) {
+          supportMeshMapRef.current.get(id)?.dispose();
+          supportMeshMapRef.current.delete(id);
+        }
+      }
+
+      for (const p of supports) {
+        if (currentIds.has(p.id)) continue;
+        const m = createSupportMesh(scene, p, supportParams, mat);
+        supportMeshMapRef.current.set(p.id, m);
+      }
+    }, [supports, supportParams]);
+
     // 4) 선택 변경 시 highlight 갱신
     useEffect(() => {
       refreshHighlight();
@@ -459,6 +514,22 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         previewTransform(id, t) {
           const mesh = meshMapRef.current.get(id);
           if (mesh) applyTransformToMesh(mesh, t);
+        },
+        generateAutoSupports(projectId, params) {
+          const scene = sceneRef.current;
+          if (!scene) return [];
+          const out: SupportPointV2[] = [];
+          for (const [stlId, mesh] of meshMapRef.current) {
+            const pts = autoGenerateSupportPoints(
+              scene,
+              mesh,
+              params,
+              projectId,
+              stlId,
+            );
+            out.push(...pts);
+          }
+          return out;
         },
       }),
       [],

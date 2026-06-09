@@ -3,6 +3,7 @@ import { useParams, useNavigate, Navigate } from "react-router-dom";
 
 import { useProjectV2 } from "../hooks/useProjectsV2";
 import { useStlFilesV2 } from "../hooks/useStlFilesV2";
+import { useSupportsV2 } from "../hooks/useSupportsV2";
 import {
   useShortcutsListener,
   useShortcutHandler,
@@ -10,6 +11,8 @@ import {
 import { useClipboardStore } from "../hooks/useClipboardStore";
 import { useUndoStore } from "../hooks/useUndoStore";
 import { SupportParamsPanel, useSupportParamsStore } from "../support";
+import * as supportRepo from "../data/supports.repo";
+import type { SupportPointV2 } from "../support/types";
 import BabylonScene, {
   type BabylonSceneHandle,
   type GizmoMode,
@@ -37,16 +40,25 @@ const ViewerV2Page: React.FC = () => {
     updateTransform,
   } = useStlFilesV2(projectId);
 
+  const {
+    supports,
+    addMany: addSupports,
+    clearAll: clearAllSupports,
+    refresh: refreshSupports,
+  } = useSupportsV2(projectId);
+
   const [browserOpen, setBrowserOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const [gizmoMode, setGizmoMode] = useState<GizmoMode>("none");
+  const [autoBusy, setAutoBusy] = useState(false);
   const sceneHandleRef = useRef<BabylonSceneHandle>(null);
 
   const overhangAngleDeg = useSupportParamsStore(
     (s) => s.params.overhangAngleDeg,
   );
+  const supportParams = useSupportParamsStore((s) => s.params);
 
   useShortcutsListener();
 
@@ -120,6 +132,53 @@ const ViewerV2Page: React.FC = () => {
   useShortcutHandler("paste", handlePaste);
   useShortcutHandler("undo", handleUndo);
   useShortcutHandler("redo", handleRedo);
+
+  // ----- 자동 서포트 -----
+  const handleAutoGenerate = useCallback(async () => {
+    if (!projectId || autoBusy) return;
+    if (files.length === 0) return;
+    setAutoBusy(true);
+    try {
+      const generated =
+        sceneHandleRef.current?.generateAutoSupports(projectId, supportParams) ??
+        [];
+      if (generated.length === 0) return;
+
+      const ids = generated.map((p) => p.id);
+      await addSupports(generated);
+
+      useUndoStore.getState().push({
+        label: "auto-supports",
+        undo: async () => {
+          for (const id of ids) {
+            await supportRepo.deleteSupport(id);
+          }
+          await refreshSupports();
+        },
+        redo: async () => {
+          await addSupports(generated);
+        },
+      });
+    } finally {
+      setAutoBusy(false);
+    }
+  }, [projectId, autoBusy, files.length, supportParams, addSupports, refreshSupports]);
+
+  const handleClearAllSupports = useCallback(async () => {
+    if (!projectId) return;
+    if (supports.length === 0) return;
+    const snapshot: SupportPointV2[] = supports.slice();
+    await clearAllSupports();
+    useUndoStore.getState().push({
+      label: "clear-supports",
+      undo: async () => {
+        await addSupports(snapshot);
+      },
+      redo: async () => {
+        await clearAllSupports();
+      },
+    });
+  }, [projectId, supports, clearAllSupports, addSupports]);
 
   // ----- Transform -----
   const handlePreviewTransform = useCallback(
@@ -232,6 +291,8 @@ const ViewerV2Page: React.FC = () => {
             overhangAngleDeg={overhangAngleDeg}
             gizmoMode={gizmoMode}
             onGizmoCommit={handleCommitTransform}
+            supports={supports}
+            supportParams={supportParams}
           />
 
           <ViewControls
@@ -306,7 +367,12 @@ const ViewerV2Page: React.FC = () => {
               onPreview={handlePreviewTransform}
               onCommit={handleCommitTransform}
             />
-            <SupportParamsPanel />
+            <SupportParamsPanel
+              onAutoGenerate={handleAutoGenerate}
+              onClearAll={handleClearAllSupports}
+              supportCount={supports.length}
+              busy={autoBusy}
+            />
           </div>
         </aside>
       </div>
