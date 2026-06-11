@@ -79,8 +79,13 @@ interface BabylonSceneProps {
     stlId: string,
     contact: [number, number, number],
   ) => void;
-  /** 'support' 모드에서 기둥 픽 시 → 해당 서포트 삭제. */
-  onRemoveSupport: (supportId: string) => void;
+  /**
+   * 'support' 모드에서 기둥 픽 시 선택, 빈 공간 픽 시 null.
+   * 삭제는 Delete 키 / UI 버튼으로 분리.
+   */
+  onPickSupport: (supportId: string | null) => void;
+  /** 현재 선택된 기둥 id (highlight 표시용). */
+  selectedSupportId: string | null;
   className?: string;
 }
 
@@ -115,7 +120,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       supportParams,
       editMode,
       onAddSupportAt,
-      onRemoveSupport,
+      onPickSupport,
+      selectedSupportId,
       className = "",
     },
     ref,
@@ -153,8 +159,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     editModeRef.current = editMode;
     const onAddSupportRef = useRef(onAddSupportAt);
     onAddSupportRef.current = onAddSupportAt;
-    const onRemoveSupportRef = useRef(onRemoveSupport);
-    onRemoveSupportRef.current = onRemoveSupport;
+    const onPickSupportRef = useRef(onPickSupport);
+    onPickSupportRef.current = onPickSupport;
+    const selectedSupportRef = useRef<string | null>(selectedSupportId);
+    selectedSupportRef.current = selectedSupportId;
     const selectedRef = useRef<ReadonlySet<string>>(selectedIds);
     selectedRef.current = selectedIds;
     const onPickRef = useRef(onPick);
@@ -169,6 +177,11 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       for (const id of selectedRef.current) {
         const mesh = meshMapRef.current.get(id);
         if (mesh) hl.addMesh(mesh, HIGHLIGHT_COLOR);
+      }
+      const sSel = selectedSupportRef.current;
+      if (sSel) {
+        const sMesh = supportMeshMapRef.current.get(sSel);
+        if (sMesh) hl.addMesh(sMesh, HIGHLIGHT_COLOR);
       }
     }
 
@@ -356,19 +369,24 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
 
         const picked = info.pickInfo?.pickedMesh;
 
-        // 'support' 모드: 모델 표면 픽 → 추가, 기둥 픽 → 삭제.
+        // 'support' 모드: 모델 표면 픽 → 추가, 기둥 픽 → 선택,
+        // 빈 공간 픽 → 선택 해제 (삭제는 Delete 키 / UI 버튼).
         if (editModeRef.current === "support") {
-          if (!picked) return;
+          if (!picked) {
+            onPickSupportRef.current(null);
+            return;
+          }
           const meta = (picked as { metadata?: { type?: string; supportId?: string } })
             .metadata;
           if (meta?.type === "support" && meta.supportId) {
-            onRemoveSupportRef.current(meta.supportId);
+            onPickSupportRef.current(meta.supportId);
             return;
           }
           for (const [id, mesh] of meshMapRef.current) {
             if (mesh === picked && info.pickInfo?.pickedPoint) {
               const p = info.pickInfo.pickedPoint;
               onAddSupportRef.current(id, [p.x, p.y, p.z]);
+              onPickSupportRef.current(null);
               return;
             }
           }
@@ -540,7 +558,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     useEffect(() => {
       refreshHighlight();
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selectedIds]);
+    }, [selectedIds, selectedSupportId]);
 
     // 5) Gizmo: 선택 / 모드 / files / editMode 변경 시 attach 재계산
     useEffect(() => {

@@ -56,6 +56,9 @@ const ViewerV2Page: React.FC = () => {
   );
   const [gizmoMode, setGizmoMode] = useState<GizmoMode>("none");
   const [editMode, setEditMode] = useState<EditMode>("select");
+  const [selectedSupportId, setSelectedSupportId] = useState<string | null>(
+    null,
+  );
   const [autoBusy, setAutoBusy] = useState(false);
   const sceneHandleRef = useRef<BabylonSceneHandle>(null);
 
@@ -136,6 +139,7 @@ const ViewerV2Page: React.FC = () => {
   useShortcutHandler("paste", handlePaste);
   useShortcutHandler("undo", handleUndo);
   useShortcutHandler("redo", handleRedo);
+  useShortcutHandler("delete", handleDeleteSelectedSupport);
 
   // ----- 자동 서포트 -----
   const handleAutoGenerate = useCallback(async () => {
@@ -203,6 +207,7 @@ const ViewerV2Page: React.FC = () => {
       if (!target) return;
       await supportRepo.deleteSupport(supportId);
       await refreshSupports();
+      if (selectedSupportId === supportId) setSelectedSupportId(null);
       useUndoStore.getState().push({
         label: "remove-support",
         undo: async () => {
@@ -214,8 +219,13 @@ const ViewerV2Page: React.FC = () => {
         },
       });
     },
-    [supports, addSupports, refreshSupports],
+    [supports, addSupports, refreshSupports, selectedSupportId],
   );
+
+  const handleDeleteSelectedSupport = useCallback(() => {
+    if (editMode !== "support" || !selectedSupportId) return;
+    void handleRemoveSupport(selectedSupportId);
+  }, [editMode, selectedSupportId, handleRemoveSupport]);
 
   const handleClearAllSupports = useCallback(async () => {
     if (!projectId) return;
@@ -348,7 +358,8 @@ const ViewerV2Page: React.FC = () => {
             supportParams={supportParams}
             editMode={editMode}
             onAddSupportAt={handleAddSupportAt}
-            onRemoveSupport={handleRemoveSupport}
+            onPickSupport={setSelectedSupportId}
+            selectedSupportId={selectedSupportId}
           />
 
           <ViewControls
@@ -362,12 +373,27 @@ const ViewerV2Page: React.FC = () => {
             enabled={selectedIds.size === 1 && editMode === "select"}
           />
 
-          <EditModeControls mode={editMode} onChange={setEditMode} />
+          <EditModeControls
+            mode={editMode}
+            onChange={(m) => {
+              setEditMode(m);
+              if (m === "select") setSelectedSupportId(null);
+            }}
+          />
 
           {editMode === "support" && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-700 pointer-events-none">
-              <strong>서포트 편집</strong> · 모델 표면 클릭 = 추가 / 기둥
-              클릭 = 삭제
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-white/95 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-700">
+              <span className="pointer-events-none">
+                <strong>서포트 편집</strong> · 모델 표면 = 추가 · 기둥 클릭 =
+                선택 · <kbd className="px-1 border rounded">Delete</kbd> = 삭제
+              </span>
+              <button
+                onClick={handleDeleteSelectedSupport}
+                disabled={!selectedSupportId}
+                className="px-2 py-0.5 text-xs bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                선택 삭제
+              </button>
             </div>
           )}
 

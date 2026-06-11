@@ -23,7 +23,8 @@ export type ShortcutAction =
   | "selectAll"
   | "copy"
   | "cut"
-  | "paste";
+  | "paste"
+  | "delete";
 
 type Handler = () => void;
 
@@ -54,15 +55,23 @@ function isTextEditingTarget(target: EventTarget | null): boolean {
   return false;
 }
 
-function resolveAction(e: KeyboardEvent): ShortcutAction | null {
+/** modifier 가 필요한 액션. Delete 는 단축키만으로 동작. */
+function resolveAction(e: KeyboardEvent): {
+  action: ShortcutAction;
+  requiresMeta: boolean;
+} | null {
+  if (e.key === "Delete" || e.key === "Backspace") {
+    return { action: "delete", requiresMeta: false };
+  }
   const key = e.key.toLowerCase();
-  if (key === "z" && !e.shiftKey) return "undo";
-  if (key === "y") return "redo";
-  if (key === "z" && e.shiftKey) return "redo";
-  if (key === "a") return "selectAll";
-  if (key === "c") return "copy";
-  if (key === "x") return "cut";
-  if (key === "v") return "paste";
+  if (key === "z" && !e.shiftKey)
+    return { action: "undo", requiresMeta: true };
+  if (key === "y") return { action: "redo", requiresMeta: true };
+  if (key === "z" && e.shiftKey) return { action: "redo", requiresMeta: true };
+  if (key === "a") return { action: "selectAll", requiresMeta: true };
+  if (key === "c") return { action: "copy", requiresMeta: true };
+  if (key === "x") return { action: "cut", requiresMeta: true };
+  if (key === "v") return { action: "paste", requiresMeta: true };
   return null;
 }
 
@@ -72,16 +81,15 @@ function resolveAction(e: KeyboardEvent): ShortcutAction | null {
 export function useShortcutsListener(): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const meta = e.ctrlKey || e.metaKey;
-      if (!meta) return;
-
-      // 텍스트 입력에서는 브라우저 기본 단축키 유지.
+      // 텍스트 입력에서는 브라우저 기본 동작 유지 (Delete 키 포함).
       if (isTextEditingTarget(e.target)) return;
 
-      const action = resolveAction(e);
-      if (!action) return;
+      const resolved = resolveAction(e);
+      if (!resolved) return;
 
-      const handler = useShortcutsStore.getState().handlers[action];
+      if (resolved.requiresMeta && !(e.ctrlKey || e.metaKey)) return;
+
+      const handler = useShortcutsStore.getState().handlers[resolved.action];
       if (!handler) return;
 
       e.preventDefault();
