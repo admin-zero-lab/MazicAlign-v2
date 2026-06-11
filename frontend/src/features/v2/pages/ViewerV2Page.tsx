@@ -13,6 +13,7 @@ import { useUndoStore } from "../hooks/useUndoStore";
 import { SupportParamsPanel, useSupportParamsStore } from "../support";
 import * as supportRepo from "../data/supports.repo";
 import type { SupportPointV2 } from "../support/types";
+import { downloadBlob } from "../utils/stl-export";
 import BabylonScene, {
   type BabylonSceneHandle,
   type GizmoMode,
@@ -229,6 +230,16 @@ const ViewerV2Page: React.FC = () => {
 
   useShortcutHandler("delete", handleDeleteSelectedSupport);
 
+  // ----- STL 내보내기 -----
+  const handleExportStl = useCallback(() => {
+    if (files.length === 0) return;
+    const blob = sceneHandleRef.current?.exportStl();
+    if (!blob) return;
+    const safe = (project?.name ?? "project").replace(/[\\/:*?"<>|]/g, "_");
+    const suffix = supports.length > 0 ? "_supported" : "";
+    downloadBlob(blob, `${safe}${suffix}.stl`);
+  }, [files.length, project?.name, supports.length]);
+
   const handleClearAllSupports = useCallback(async () => {
     if (!projectId) return;
     if (supports.length === 0) return;
@@ -327,6 +338,13 @@ const ViewerV2Page: React.FC = () => {
           </div>
 
           <div className="flex items-center space-x-2">
+            <button
+              onClick={handleExportStl}
+              disabled={files.length === 0}
+              className="px-3 py-1 text-sm text-primary-700 border border-primary-600 rounded hover:bg-primary-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              STL 내보내기
+            </button>
             <button
               onClick={() => setBrowserOpen(true)}
               className="px-3 py-1 text-sm bg-primary-600 text-white rounded hover:bg-primary-700 transition-colors"

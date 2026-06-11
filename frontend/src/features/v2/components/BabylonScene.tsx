@@ -31,6 +31,7 @@ import {
   createSupportMesh,
 } from "../utils/support-render";
 import { autoGenerateSupportPoints } from "../support/utils/auto-generate";
+import { meshesToStlBlob } from "../utils/stl-export";
 import type { SupportParams, SupportPointV2 } from "../support/types";
 import type { EditMode } from "./EditModeControls";
 
@@ -105,6 +106,11 @@ export interface BabylonSceneHandle {
     projectId: string,
     params: SupportParams,
   ) => SupportPointV2[];
+  /**
+   * 현재 씬의 STL + 서포트 메쉬를 합쳐 binary STL Blob 으로 반환.
+   * 모델이 0 개면 null.
+   */
+  exportStl: () => Blob | null;
 }
 
 const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
@@ -617,6 +623,12 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
             out.push(...pts);
           }
           return out;
+        },
+        exportStl() {
+          const stl = Array.from(meshMapRef.current.values());
+          const supports = Array.from(supportMeshMapRef.current.values());
+          if (stl.length === 0) return null;
+          return meshesToStlBlob([...stl, ...supports]);
         },
       }),
       [],
