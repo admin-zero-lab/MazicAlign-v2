@@ -12,6 +12,7 @@ import {
   HemisphericLight,
   HighlightLayer,
   Mesh,
+  Plane,
   PointerDragBehavior,
   PointerEventTypes,
   PositionGizmo,
@@ -87,6 +88,11 @@ interface BabylonSceneProps {
   onPickSupport: (supportId: string | null) => void;
   /** 현재 선택된 기둥 id (highlight 표시용). */
   selectedSupportId: string | null;
+  /**
+   * Z 슬라이스 미리보기 높이 (mm). null 이면 비활성.
+   * 활성 시 Y > sliceY 영역의 메쉬가 잘려 단면이 보인다.
+   */
+  sliceY: number | null;
   className?: string;
 }
 
@@ -128,6 +134,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       onAddSupportAt,
       onPickSupport,
       selectedSupportId,
+      sliceY,
       className = "",
     },
     ref,
@@ -565,6 +572,18 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       syncGizmo();
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedIds, gizmoMode, files, editMode]);
+
+    // 5.5) Z 슬라이스 미리보기 — scene.clipPlane 으로 Y > sliceY 영역 잘라냄
+    useEffect(() => {
+      const scene = sceneRef.current;
+      if (!scene) return;
+      if (sliceY == null) {
+        scene.clipPlane = null;
+        return;
+      }
+      // Plane normal (0,1,0), distance = -sliceY → y > sliceY 인 픽셀 cull.
+      scene.clipPlane = new Plane(0, 1, 0, -sliceY);
+    }, [sliceY]);
 
     // 6) editMode 변경 시:
     //    · STL 메쉬의 PointerDragBehavior detach/attach

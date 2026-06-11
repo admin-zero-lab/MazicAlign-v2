@@ -61,6 +61,10 @@ const ViewerV2Page: React.FC = () => {
     null,
   );
   const [autoBusy, setAutoBusy] = useState(false);
+  const [slicePreview, setSlicePreview] = useState<{
+    on: boolean;
+    y: number;
+  }>({ on: false, y: 30 });
   const sceneHandleRef = useRef<BabylonSceneHandle>(null);
 
   const overhangAngleDeg = useSupportParamsStore(
@@ -339,6 +343,16 @@ const ViewerV2Page: React.FC = () => {
 
           <div className="flex items-center space-x-2">
             <button
+              onClick={() => setSlicePreview((s) => ({ ...s, on: !s.on }))}
+              className={`px-3 py-1 text-sm border rounded transition-colors ${
+                slicePreview.on
+                  ? "bg-primary-600 text-white border-primary-600"
+                  : "text-primary-700 border-primary-600 hover:bg-primary-50"
+              }`}
+            >
+              슬라이스 미리보기
+            </button>
+            <button
               onClick={handleExportStl}
               disabled={files.length === 0}
               className="px-3 py-1 text-sm text-primary-700 border border-primary-600 rounded hover:bg-primary-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -380,6 +394,7 @@ const ViewerV2Page: React.FC = () => {
             onAddSupportAt={handleAddSupportAt}
             onPickSupport={setSelectedSupportId}
             selectedSupportId={selectedSupportId}
+            sliceY={slicePreview.on ? slicePreview.y : null}
           />
 
           <ViewControls
@@ -413,6 +428,43 @@ const ViewerV2Page: React.FC = () => {
                 className="px-2 py-0.5 text-xs bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
               >
                 선택 삭제
+              </button>
+            </div>
+          )}
+
+          {slicePreview.on && (
+            <div className="absolute bottom-16 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-white/95 backdrop-blur rounded-md shadow px-4 py-3 text-sm text-gray-700 min-w-[360px]">
+              <span className="text-xs font-semibold text-gray-600 whitespace-nowrap">
+                슬라이스 Z
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={250}
+                step={0.1}
+                value={slicePreview.y}
+                onChange={(e) =>
+                  setSlicePreview((s) => ({ ...s, y: Number(e.target.value) }))
+                }
+                className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+              />
+              <input
+                type="number"
+                min={0}
+                max={250}
+                step={0.1}
+                value={slicePreview.y}
+                onChange={(e) =>
+                  setSlicePreview((s) => ({ ...s, y: Number(e.target.value) }))
+                }
+                className="w-20 px-2 py-1 text-sm border border-gray-300 rounded"
+              />
+              <span className="text-xs text-gray-500">mm</span>
+              <button
+                onClick={() => setSlicePreview({ on: false, y: 30 })}
+                className="ml-2 px-2 py-0.5 text-xs text-gray-600 hover:bg-gray-100 rounded"
+              >
+                닫기
               </button>
             </div>
           )}
