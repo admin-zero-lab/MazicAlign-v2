@@ -131,6 +131,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     // 최신 값을 effect 바깥에서 참조할 수 있게 ref 로 동기화.
     const overhangRef = useRef<number>(overhangAngleDeg);
     overhangRef.current = overhangAngleDeg;
+    const liftRef = useRef<number>(supportParams.liftMm);
+    liftRef.current = supportParams.liftMm;
     const selectedRef = useRef<ReadonlySet<string>>(selectedIds);
     selectedRef.current = selectedIds;
     const onPickRef = useRef(onPick);
@@ -406,7 +408,12 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       Promise.all(
         newFiles.map(async (f) => {
           try {
-            const mesh = await loadStlIntoScene(scene, f.blob, f.fileName);
+            const mesh = await loadStlIntoScene(
+              scene,
+              f.blob,
+              f.fileName,
+              liftRef.current,
+            );
             if (cancelled) {
               mesh.dispose();
               return null;

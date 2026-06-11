@@ -33,6 +33,11 @@ export interface SupportParams {
   /** 자동 생성 시 컨택트 포인트 간 최소 거리. mm.
    *  격자 샘플링의 격자 간격을 결정한다. 작을수록 서포트가 촘촘. */
   contactSpacingMm: number;
+
+  /** 모델 base 를 빌드플레이트 위로 띄우는 높이. mm.
+   *  서포트 기둥이 의미 있는 길이로 생기려면 필요. STL 로드 시
+   *  적용되며 변경 후엔 다시 불러올 때부터 반영. */
+  liftMm: number;
 }
 
 export type SupportParamKey = keyof SupportParams;
