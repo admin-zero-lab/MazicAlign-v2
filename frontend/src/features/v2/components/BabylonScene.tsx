@@ -524,15 +524,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         },
         generateAutoSupports(projectId, params) {
           const scene = sceneRef.current;
-          if (!scene) {
-            // eslint-disable-next-line no-console
-            console.warn("[v2 auto] scene is null");
-            return [];
-          }
-          // eslint-disable-next-line no-console
-          console.log(
-            `[v2 auto] meshes in map: ${meshMapRef.current.size}`,
-          );
+          if (!scene) return [];
           const out: SupportPointV2[] = [];
           for (const [stlId, mesh] of meshMapRef.current) {
             const pts = autoGenerateSupportPoints(
