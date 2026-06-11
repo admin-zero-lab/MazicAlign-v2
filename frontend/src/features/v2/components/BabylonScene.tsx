@@ -35,7 +35,11 @@ import {
 } from "../utils/support-render";
 import { autoGenerateSupportPoints } from "../support/utils/auto-generate";
 import { meshesToStlBlob } from "../utils/stl-export";
-import { sliceMeshAtY } from "../utils/slice-section";
+import { chainSegments, sliceMeshAtY } from "../utils/slice-section";
+import {
+  buildPolygonFillMesh,
+  createSliceFillMaterial,
+} from "../utils/slice-render";
 import type { SupportParams, SupportPointV2 } from "../support/types";
 import type { EditMode } from "./EditModeControls";
 
@@ -155,6 +159,13 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       typeof createSupportMaterial
     > | null>(null);
     const sliceOutlineRef = useRef<LinesMesh | null>(null);
+    const sliceFillMeshesRef = useRef<Mesh[]>([]);
+    const sliceModelMatRef = useRef<ReturnType<
+      typeof createSliceFillMaterial
+    > | null>(null);
+    const sliceSupportMatRef = useRef<ReturnType<
+      typeof createSliceFillMaterial
+    > | null>(null);
     const furnitureRef = useRef<SceneFurniture | null>(null);
     const highlightRef = useRef<HighlightLayer | null>(null);
     const utilityLayerRef = useRef<UtilityLayerRenderer | null>(null);
@@ -321,6 +332,16 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       });
 
       supportMaterialRef.current = createSupportMaterial(scene);
+      sliceModelMatRef.current = createSliceFillMaterial(
+        scene,
+        new Color3(0.85, 0.86, 0.9),
+        "v2_slice_model_mat",
+      );
+      sliceSupportMatRef.current = createSliceFillMaterial(
+        scene,
+        new Color3(0.55, 0.7, 0.95),
+        "v2_slice_support_mat",
+      );
 
       const hl = new HighlightLayer("v2_highlight", scene, {
         blurHorizontalSize: 0.6,
@@ -454,6 +475,12 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         supportMaterialRef.current = null;
         sliceOutlineRef.current?.dispose();
         sliceOutlineRef.current = null;
+        for (const fm of sliceFillMeshesRef.current) fm.dispose();
+        sliceFillMeshesRef.current = [];
+        sliceModelMatRef.current?.dispose();
+        sliceSupportMatRef.current?.dispose();
+        sliceModelMatRef.current = null;
+        sliceSupportMatRef.current = null;
         for (const mesh of meshMapRef.current.values()) {
           mesh.dispose();
         }
@@ -581,12 +608,17 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
 
     // 5.5) Z 슬라이스 미리보기:
     //   · scene.clipPlane 으로 Y > sliceY 영역 컬링.
-    //   · sliceMeshAtY 로 모든 mesh 의 단면 segment 를 계산해서
-    //     slice 평면 위에 주황색 라인으로 그린다.
+    //   · 모든 mesh 의 단면 segment 계산 → chain → polygon fill mesh.
+    //   · outline 라인은 polygon 경계 위에 얇게 그려 강조.
     useEffect(() => {
       const scene = sceneRef.current;
-      if (!scene) return;
+      const modelMat = sliceModelMatRef.current;
+      const supportMat = sliceSupportMatRef.current;
+      if (!scene || !modelMat || !supportMat) return;
 
+      // 기존 fill / outline 정리.
+      for (const fm of sliceFillMeshesRef.current) fm.dispose();
+      sliceFillMeshesRef.current = [];
       sliceOutlineRef.current?.dispose();
       sliceOutlineRef.current = null;
 
@@ -595,39 +627,68 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         return;
       }
 
-      // (1) 픽셀 컬링.
       scene.clipPlane = new Plane(0, 1, 0, -sliceY);
 
-      // (2) 단면 segment → LinesMesh.
+      const yFill = sliceY + 0.005;
+      const yLine = sliceY + 0.02;
       const lines: Vector3[][] = [];
-      const yAt = sliceY + 0.02; // 평면과 같은 평면이면 z-fight → 살짝 위.
+
+      // 모델 단면.
       for (const mesh of meshMapRef.current.values()) {
         const segs = sliceMeshAtY(mesh, sliceY);
+        if (segs.length === 0) continue;
+        const polys = chainSegments(segs);
+        for (const p of polys) {
+          const fill = buildPolygonFillMesh(
+            scene,
+            p,
+            yFill,
+            modelMat,
+            "v2_slice_model_fill",
+          );
+          if (fill) sliceFillMeshesRef.current.push(fill);
+        }
         for (const s of segs) {
           lines.push([
-            new Vector3(s.a[0], yAt, s.a[1]),
-            new Vector3(s.b[0], yAt, s.b[1]),
+            new Vector3(s.a[0], yLine, s.a[1]),
+            new Vector3(s.b[0], yLine, s.b[1]),
           ]);
         }
       }
+
+      // 서포트 단면.
       for (const sm of supportMeshMapRef.current.values()) {
         const segs = sliceMeshAtY(sm, sliceY);
+        if (segs.length === 0) continue;
+        const polys = chainSegments(segs);
+        for (const p of polys) {
+          const fill = buildPolygonFillMesh(
+            scene,
+            p,
+            yFill,
+            supportMat,
+            "v2_slice_support_fill",
+          );
+          if (fill) sliceFillMeshesRef.current.push(fill);
+        }
         for (const s of segs) {
           lines.push([
-            new Vector3(s.a[0], yAt, s.a[1]),
-            new Vector3(s.b[0], yAt, s.b[1]),
+            new Vector3(s.a[0], yLine, s.a[1]),
+            new Vector3(s.b[0], yLine, s.b[1]),
           ]);
         }
       }
-      if (lines.length === 0) return;
-      const m = MeshBuilder.CreateLineSystem(
-        "v2_slice_outline",
-        { lines },
-        scene,
-      );
-      m.color = new Color3(1.0, 0.55, 0.15); // 따뜻한 주황
-      m.isPickable = false;
-      sliceOutlineRef.current = m;
+
+      if (lines.length > 0) {
+        const ol = MeshBuilder.CreateLineSystem(
+          "v2_slice_outline",
+          { lines },
+          scene,
+        );
+        ol.color = new Color3(1.0, 0.55, 0.15);
+        ol.isPickable = false;
+        sliceOutlineRef.current = ol;
+      }
     }, [sliceY, files, supports, supportParams]);
 
     // 6) editMode 변경 시:

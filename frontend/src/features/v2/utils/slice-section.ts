@@ -9,6 +9,11 @@ export interface SliceSegment {
   b: [number, number];
 }
 
+/** 닫힌 polygon (시계/반시계 무관, 마지막 점은 첫 점과 연결된 것으로 본다). */
+export interface SlicePolygon {
+  points: [number, number][];
+}
+
 const EPS = 1e-6;
 
 /**
@@ -100,3 +105,84 @@ export function sliceMeshAtY(mesh: Mesh, y: number): SliceSegment[] {
 
   return out;
 }
+
+/**
+ * Segment 들을 endpoint matching 으로 연결해 닫힌 polygon 들로 만든다.
+ *
+ * 좌표를 1 µm (1e-3 mm) 단위로 양자화하여 endpoint 동등성 비교를 안전
+ * 하게 한다. 한 점에 segment 가 정확히 2 개 incident 면 그 점은 폴리곤
+ * 위. 시작점에서 한쪽으로 따라가다 시작점으로 돌아오면 폴리곤 1 개 완성.
+ */
+export function chainSegments(segs: SliceSegment[]): SlicePolygon[] {
+  const QUANT = 1000; // 1µm
+
+  // 양자화된 (qx, qz) → 점 ID
+  const idMap = new Map<string, number>();
+  const points: [number, number][] = [];
+
+  const qkey = (p: [number, number]) =>
+    `${Math.round(p[0] * QUANT)}_${Math.round(p[1] * QUANT)}`;
+
+  function ensureId(p: [number, number]): number {
+    const k = qkey(p);
+    let id = idMap.get(k);
+    if (id === undefined) {
+      id = points.length;
+      idMap.set(k, id);
+      points.push(p);
+    }
+    return id;
+  }
+
+  // adjacency 리스트 (각 점에 인접한 점 ID).
+  const adj = new Map<number, number[]>();
+  for (const s of segs) {
+    const ia = ensureId(s.a);
+    const ib = ensureId(s.b);
+    if (ia === ib) continue;
+    if (!adj.has(ia)) adj.set(ia, []);
+    if (!adj.has(ib)) adj.set(ib, []);
+    adj.get(ia)!.push(ib);
+    adj.get(ib)!.push(ia);
+  }
+
+  const visited = new Set<number>();
+  const polygons: SlicePolygon[] = [];
+
+  for (const startId of adj.keys()) {
+    if (visited.has(startId)) continue;
+
+    const polygon: [number, number][] = [];
+    let prev = -1;
+    let curr = startId;
+    let safety = adj.size + 4; // 안전 카운터
+
+    while (safety-- > 0) {
+      visited.add(curr);
+      polygon.push(points[curr]);
+
+      const neighbors = adj.get(curr) ?? [];
+      let next = -1;
+      for (const n of neighbors) {
+        if (n === prev) continue;
+        if (n === startId && polygon.length > 2) {
+          next = n;
+          break;
+        }
+        if (!visited.has(n)) {
+          next = n;
+          break;
+        }
+      }
+
+      if (next === -1 || next === startId) break;
+      prev = curr;
+      curr = next;
+    }
+
+    if (polygon.length >= 3) polygons.push({ points: polygon });
+  }
+
+  return polygons;
+}
+
