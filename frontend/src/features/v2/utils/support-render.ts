@@ -5,16 +5,27 @@ import {
   Scene,
   StandardMaterial,
   Vector3,
+  Vector4,
 } from "@babylonjs/core";
 
 import type { SupportParams, SupportPointV2 } from "../support/types";
 
 /**
- * 한 서포트 점을 시각화하는 단일 cylinder 메쉬.
+ * 서포트 기둥의 단면 프로파일.
  *
- * 첫 패스에서는 굵기 전이(tip/base) 없이 균일 trunkDiameter 의
- * 원기둥 1 개로 표시한다. Tip / Base 굵기 변화는 추후 별도 mesh
- * 또는 lathe 로 보강 예정.
+ *   base (Y=0)            ─┐  diameter = baseDiameter
+ *     │  baseTransition    │      (전이 구간: 굵기 변화)
+ *   trunk                  ─┤  diameter = trunkDiameter
+ *     │  (중앙)            │
+ *   tip end                ─┤  diameter = trunkDiameter
+ *     │  tipTransition     │      (전이 구간)
+ *   contact                ─┘  diameter = tipDiameter
+ *
+ * Lathe(회전체) 로 만든다 — 한 mesh 로 매끄러운 윤곽.
+ *
+ * 자동 생성 결과는 base.xz == contact.xz 라 수직 (회전 불필요).
+ * 수동 추가에서도 우리는 base 를 (contact.x, 0, contact.z) 로 두므로
+ * 항상 수직.
  */
 export function createSupportMesh(
   scene: Scene,
@@ -22,36 +33,55 @@ export function createSupportMesh(
   params: SupportParams,
   material: StandardMaterial,
 ): Mesh {
+  const base = new Vector3(point.base[0], point.base[1], point.base[2]);
   const contact = new Vector3(
     point.contact[0],
     point.contact[1],
     point.contact[2],
   );
-  const base = new Vector3(point.base[0], point.base[1], point.base[2]);
 
-  const center = Vector3.Center(contact, base);
-  const direction = contact.subtract(base);
-  const height = direction.length();
-  const diameter = params.trunkDiameterMm;
+  const height = Math.max(contact.y - base.y, 0.01);
 
-  const m = MeshBuilder.CreateCylinder(
+  // 전이 길이가 전체 높이보다 커지지 않도록 안전하게 축소.
+  let baseT = params.baseTransitionMm;
+  let tipT = params.tipTransitionMm;
+  const totalT = baseT + tipT;
+  if (totalT >= height) {
+    const scale = (height / totalT) * 0.95;
+    baseT *= scale;
+    tipT *= scale;
+  }
+
+  const trunkR = params.trunkDiameterMm * 0.5;
+  const baseR = Math.max(params.baseDiameterMm * 0.5, trunkR);
+  const tipR = Math.min(params.tipDiameterMm * 0.5, trunkR);
+
+  // Lathe profile points (X = radius, Y = height along axis).
+  const profile: Vector3[] = [
+    new Vector3(baseR, 0, 0),
+    new Vector3(trunkR, baseT, 0),
+    new Vector3(trunkR, height - tipT, 0),
+    new Vector3(tipR, height, 0),
+  ];
+
+  const m = MeshBuilder.CreateLathe(
     `support_${point.id}`,
     {
-      height: Math.max(height, 0.01),
-      diameter,
+      shape: profile,
       tessellation: 12,
+      closed: true,
+      cap: Mesh.CAP_ALL,
+      // sideOrientation must be set so the inside is not flipped.
+      sideOrientation: Mesh.DEFAULTSIDE,
+      // frontUVs / backUVs are required by the type for cap modes.
+      frontUVs: new Vector4(0, 0, 1, 1),
     },
     scene,
   );
-  m.position.copyFrom(center);
 
-  // Babylon CreateCylinder 는 기본 Y 축으로 직립. 우리 base→contact
-  // 방향에 맞추려면 회전이 필요한데, 우리 자동 생성은 항상 Y 수직
-  // (base.x=contact.x, base.z=contact.z) 이라 회전 없이도 일치한다.
-  // (수동 편집에서 비수직 서포트를 만들 경우 그때 회전 추가.)
-
+  m.position.copyFrom(base);
   m.material = material;
-  m.isPickable = false; // 'support' 모드일 때만 BabylonScene 이 true 로 토글
+  m.isPickable = false; // 'support' 모드일 때만 BabylonScene 이 토글
   m.metadata = { type: "support", supportId: point.id };
   return m;
 }

@@ -531,25 +531,19 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       }
     }, [overhangAngleDeg]);
 
-    // 3.5) 서포트 점 동기화 — files 와 같은 방식 (신규는 add, 사라진 건 dispose)
+    // 3.5) 서포트 점 동기화 — supports / supportParams 변경 시 전부
+    //      dispose 후 재생성. 굵기 변화가 즉시 반영되도록 단순화.
     useEffect(() => {
       const scene = sceneRef.current;
       const mat = supportMaterialRef.current;
       if (!scene || !mat) return;
 
-      const currentIds = new Set(supportMeshMapRef.current.keys());
-      const nextIds = new Set(supports.map((s) => s.id));
-
-      for (const id of currentIds) {
-        if (!nextIds.has(id)) {
-          supportMeshMapRef.current.get(id)?.dispose();
-          supportMeshMapRef.current.delete(id);
-        }
-      }
+      for (const sm of supportMeshMapRef.current.values()) sm.dispose();
+      supportMeshMapRef.current.clear();
 
       for (const p of supports) {
-        if (currentIds.has(p.id)) continue;
         const m = createSupportMesh(scene, p, supportParams, mat);
+        m.isPickable = editModeRef.current === "support";
         supportMeshMapRef.current.set(p.id, m);
       }
     }, [supports, supportParams]);
