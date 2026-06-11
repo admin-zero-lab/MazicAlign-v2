@@ -22,6 +22,9 @@ import ViewControls from "../components/ViewControls";
 import StlFileList from "../components/StlFileList";
 import TransformPanel from "../components/TransformPanel";
 import GizmoControls from "../components/GizmoControls";
+import EditModeControls, {
+  type EditMode,
+} from "../components/EditModeControls";
 import { IDENTITY_TRANSFORM, type TransformV2 } from "../types/transform";
 
 /**
@@ -52,6 +55,7 @@ const ViewerV2Page: React.FC = () => {
     () => new Set(),
   );
   const [gizmoMode, setGizmoMode] = useState<GizmoMode>("none");
+  const [editMode, setEditMode] = useState<EditMode>("select");
   const [autoBusy, setAutoBusy] = useState(false);
   const sceneHandleRef = useRef<BabylonSceneHandle>(null);
 
@@ -163,6 +167,55 @@ const ViewerV2Page: React.FC = () => {
       setAutoBusy(false);
     }
   }, [projectId, autoBusy, files.length, supportParams, addSupports, refreshSupports]);
+
+  // ----- 수동 편집 -----
+  const handleAddSupportAt = useCallback(
+    async (stlId: string, contact: [number, number, number]) => {
+      if (!projectId) return;
+      if (contact[1] <= 0.5) return; // 베드에 너무 가까우면 무의미
+      const newPoint: SupportPointV2 = {
+        id: crypto.randomUUID(),
+        projectId,
+        stlId,
+        contact,
+        base: [contact[0], 0, contact[2]],
+        source: "manual",
+        addedAt: Date.now(),
+      };
+      await addSupports([newPoint]);
+      useUndoStore.getState().push({
+        label: "add-support",
+        undo: async () => {
+          await supportRepo.deleteSupport(newPoint.id);
+          await refreshSupports();
+        },
+        redo: async () => {
+          await addSupports([newPoint]);
+        },
+      });
+    },
+    [projectId, addSupports, refreshSupports],
+  );
+
+  const handleRemoveSupport = useCallback(
+    async (supportId: string) => {
+      const target = supports.find((s) => s.id === supportId);
+      if (!target) return;
+      await supportRepo.deleteSupport(supportId);
+      await refreshSupports();
+      useUndoStore.getState().push({
+        label: "remove-support",
+        undo: async () => {
+          await addSupports([target]);
+        },
+        redo: async () => {
+          await supportRepo.deleteSupport(supportId);
+          await refreshSupports();
+        },
+      });
+    },
+    [supports, addSupports, refreshSupports],
+  );
 
   const handleClearAllSupports = useCallback(async () => {
     if (!projectId) return;
@@ -293,6 +346,9 @@ const ViewerV2Page: React.FC = () => {
             onGizmoCommit={handleCommitTransform}
             supports={supports}
             supportParams={supportParams}
+            editMode={editMode}
+            onAddSupportAt={handleAddSupportAt}
+            onRemoveSupport={handleRemoveSupport}
           />
 
           <ViewControls
@@ -303,8 +359,17 @@ const ViewerV2Page: React.FC = () => {
           <GizmoControls
             mode={gizmoMode}
             onChange={setGizmoMode}
-            enabled={selectedIds.size === 1}
+            enabled={selectedIds.size === 1 && editMode === "select"}
           />
+
+          <EditModeControls mode={editMode} onChange={setEditMode} />
+
+          {editMode === "support" && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-700 pointer-events-none">
+              <strong>서포트 편집</strong> · 모델 표면 클릭 = 추가 / 기둥
+              클릭 = 삭제
+            </div>
+          )}
 
           {files.length > 0 ? (
             <div className="absolute bottom-3 left-3 bg-white/90 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-700 space-y-1 pointer-events-none">

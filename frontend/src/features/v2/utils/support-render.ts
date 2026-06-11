@@ -51,7 +51,8 @@ export function createSupportMesh(
   // (수동 편집에서 비수직 서포트를 만들 경우 그때 회전 추가.)
 
   m.material = material;
-  m.isPickable = false; // 서포트는 픽으로 선택되지 않음 (Step 8 에서 활성)
+  m.isPickable = false; // 'support' 모드일 때만 BabylonScene 이 true 로 토글
+  m.metadata = { type: "support", supportId: point.id };
   return m;
 }
 

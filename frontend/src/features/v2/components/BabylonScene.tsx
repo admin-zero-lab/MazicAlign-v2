@@ -32,6 +32,7 @@ import {
 } from "../utils/support-render";
 import { autoGenerateSupportPoints } from "../support/utils/auto-generate";
 import type { SupportParams, SupportPointV2 } from "../support/types";
+import type { EditMode } from "./EditModeControls";
 
 export type GizmoMode = "none" | "translate" | "rotate" | "scale";
 import {
@@ -71,6 +72,15 @@ interface BabylonSceneProps {
   supports: SupportPointV2[];
   /** 서포트 굵기 등 시각화에 쓰는 파라미터. */
   supportParams: SupportParams;
+  /** 'select' / 'support' — 모드별 픽·드래그·Gizmo 동작. */
+  editMode: EditMode;
+  /** 'support' 모드에서 모델 표면 픽 시 → 그 위치에 서포트 추가. */
+  onAddSupportAt: (
+    stlId: string,
+    contact: [number, number, number],
+  ) => void;
+  /** 'support' 모드에서 기둥 픽 시 → 해당 서포트 삭제. */
+  onRemoveSupport: (supportId: string) => void;
   className?: string;
 }
 
@@ -103,6 +113,9 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       onGizmoCommit,
       supports,
       supportParams,
+      editMode,
+      onAddSupportAt,
+      onRemoveSupport,
       className = "",
     },
     ref,
@@ -112,6 +125,9 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     const sceneRef = useRef<Scene | null>(null);
     const cameraRef = useRef<ArcRotateCamera | null>(null);
     const meshMapRef = useRef<Map<string, Mesh>>(new Map());
+    const dragBehaviorMapRef = useRef<Map<string, PointerDragBehavior>>(
+      new Map(),
+    );
     const supportMeshMapRef = useRef<Map<string, Mesh>>(new Map());
     const supportMaterialRef = useRef<ReturnType<
       typeof createSupportMaterial
@@ -133,6 +149,12 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     overhangRef.current = overhangAngleDeg;
     const liftRef = useRef<number>(supportParams.liftMm);
     liftRef.current = supportParams.liftMm;
+    const editModeRef = useRef<EditMode>(editMode);
+    editModeRef.current = editMode;
+    const onAddSupportRef = useRef(onAddSupportAt);
+    onAddSupportRef.current = onAddSupportAt;
+    const onRemoveSupportRef = useRef(onRemoveSupport);
+    onRemoveSupportRef.current = onRemoveSupport;
     const selectedRef = useRef<ReadonlySet<string>>(selectedIds);
     selectedRef.current = selectedIds;
     const onPickRef = useRef(onPick);
@@ -175,7 +197,11 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         onGizmoCommitRef.current(started.id, started.t, end);
       });
 
-      mesh.addBehavior(drag);
+      // 'support' 모드면 attach 보류 (mode effect 가 attach).
+      if (editModeRef.current === "select") {
+        mesh.addBehavior(drag);
+      }
+      dragBehaviorMapRef.current.set(fileId, drag);
     }
 
     function syncGizmo() {
@@ -189,9 +215,11 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       const mesh = single ? meshMapRef.current.get(single) ?? null : null;
       const mode = gizmoModeRef.current;
 
-      pg.attachedMesh = mode === "translate" ? mesh : null;
-      rg.attachedMesh = mode === "rotate" ? mesh : null;
-      sg.attachedMesh = mode === "scale" ? mesh : null;
+      // 'support' 모드면 Gizmo 강제 detach.
+      const allow = editModeRef.current === "select";
+      pg.attachedMesh = allow && mode === "translate" ? mesh : null;
+      rg.attachedMesh = allow && mode === "rotate" ? mesh : null;
+      sg.attachedMesh = allow && mode === "scale" ? mesh : null;
     }
 
     // 1) 씬 부트스트랩
@@ -325,9 +353,30 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         if (info.type !== PointerEventTypes.POINTERPICK) return;
         const evt = info.event as PointerEvent;
         if (evt.button !== 0) return; // 좌클릭만
-        const multi = evt.ctrlKey || evt.metaKey;
 
         const picked = info.pickInfo?.pickedMesh;
+
+        // 'support' 모드: 모델 표면 픽 → 추가, 기둥 픽 → 삭제.
+        if (editModeRef.current === "support") {
+          if (!picked) return;
+          const meta = (picked as { metadata?: { type?: string; supportId?: string } })
+            .metadata;
+          if (meta?.type === "support" && meta.supportId) {
+            onRemoveSupportRef.current(meta.supportId);
+            return;
+          }
+          for (const [id, mesh] of meshMapRef.current) {
+            if (mesh === picked && info.pickInfo?.pickedPoint) {
+              const p = info.pickInfo.pickedPoint;
+              onAddSupportRef.current(id, [p.x, p.y, p.z]);
+              return;
+            }
+          }
+          return;
+        }
+
+        // 'select' 모드 (기본): 모델 선택 / 빈 공간 = 해제.
+        const multi = evt.ctrlKey || evt.metaKey;
         if (!picked) {
           onPickRef.current(null, { multi });
           return;
@@ -338,7 +387,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
             return;
           }
         }
-        // 픽된 게 furniture (plate/grid/axes) 면 무시.
+        // furniture (plate/grid/axes) 픽은 isPickable=false 라 안 옴.
       });
 
       engineRef.current = engine;
@@ -493,11 +542,30 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedIds]);
 
-    // 5) Gizmo: 선택 / 모드 / files 변경 시 attach 재계산
+    // 5) Gizmo: 선택 / 모드 / files / editMode 변경 시 attach 재계산
     useEffect(() => {
       syncGizmo();
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selectedIds, gizmoMode, files]);
+    }, [selectedIds, gizmoMode, files, editMode]);
+
+    // 6) editMode 변경 시:
+    //    · STL 메쉬의 PointerDragBehavior detach/attach
+    //    · support 메쉬의 isPickable 토글
+    useEffect(() => {
+      for (const [id, mesh] of meshMapRef.current) {
+        const drag = dragBehaviorMapRef.current.get(id);
+        if (!drag) continue;
+        const attached = mesh.behaviors.includes(drag);
+        if (editMode === "support" && attached) {
+          mesh.removeBehavior(drag);
+        } else if (editMode === "select" && !attached) {
+          mesh.addBehavior(drag);
+        }
+      }
+      for (const sm of supportMeshMapRef.current.values()) {
+        sm.isPickable = editMode === "support";
+      }
+    }, [editMode, files, supports]);
 
     // 5) 외부 ref API
     useImperativeHandle(
