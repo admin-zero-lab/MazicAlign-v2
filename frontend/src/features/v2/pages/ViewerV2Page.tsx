@@ -26,6 +26,7 @@ import GizmoControls from "../components/GizmoControls";
 import EditModeControls, {
   type EditMode,
 } from "../components/EditModeControls";
+import SliceMaskPreview from "../components/SliceMaskPreview";
 import { IDENTITY_TRANSFORM, type TransformV2 } from "../types/transform";
 
 /**
@@ -433,7 +434,15 @@ const ViewerV2Page: React.FC = () => {
           )}
 
           {slicePreview.on && (
-            <div className="absolute bottom-16 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-white/95 backdrop-blur rounded-md shadow px-4 py-3 text-sm text-gray-700 min-w-[360px]">
+            <div className="absolute bottom-16 left-1/2 -translate-x-1/2 flex flex-col items-stretch gap-2 bg-white/95 backdrop-blur rounded-md shadow px-4 py-3 text-sm text-gray-700 min-w-[420px]">
+              <SliceMaskPreview
+                sceneHandleRef={sceneHandleRef}
+                sliceY={slicePreview.y}
+                widthPx={400}
+                heightPx={250}
+                className="mx-auto"
+              />
+              <div className="flex items-center gap-3">
               <span className="text-xs font-semibold text-gray-600 whitespace-nowrap">
                 슬라이스 Z
               </span>
@@ -466,6 +475,7 @@ const ViewerV2Page: React.FC = () => {
               >
                 닫기
               </button>
+              </div>
             </div>
           )}
 

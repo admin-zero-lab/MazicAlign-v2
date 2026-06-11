@@ -40,6 +40,10 @@ import {
   buildPolygonFillMesh,
   createSliceFillMaterial,
 } from "../utils/slice-render";
+import {
+  rasterizePolygons,
+  type SliceMask,
+} from "../utils/slice-rasterize";
 import type { SupportParams, SupportPointV2 } from "../support/types";
 import type { EditMode } from "./EditModeControls";
 
@@ -124,6 +128,15 @@ export interface BabylonSceneHandle {
    * 모델이 0 개면 null.
    */
   exportStl: () => Blob | null;
+  /**
+   * 주어진 sliceY 의 단면을 width × height 픽셀의 1bpp 마스크로.
+   * 모든 STL + 서포트의 union.
+   */
+  getSliceMask: (
+    sliceY: number,
+    widthPx: number,
+    heightPx: number,
+  ) => SliceMask;
 }
 
 const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
@@ -754,6 +767,23 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           const supports = Array.from(supportMeshMapRef.current.values());
           if (stl.length === 0) return null;
           return meshesToStlBlob([...stl, ...supports]);
+        },
+        getSliceMask(sliceY, widthPx, heightPx) {
+          const polys = [];
+          for (const mesh of meshMapRef.current.values()) {
+            const segs = sliceMeshAtY(mesh, sliceY);
+            polys.push(...chainSegments(segs));
+          }
+          for (const sm of supportMeshMapRef.current.values()) {
+            const segs = sliceMeshAtY(sm, sliceY);
+            polys.push(...chainSegments(segs));
+          }
+          return rasterizePolygons(polys, {
+            widthPx,
+            heightPx,
+            plateWidthMm: PLATE_WIDTH_MM,
+            plateDepthMm: PLATE_DEPTH_MM,
+          });
         },
       }),
       [],
