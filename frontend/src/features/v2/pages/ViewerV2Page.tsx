@@ -139,7 +139,7 @@ const ViewerV2Page: React.FC = () => {
   useShortcutHandler("paste", handlePaste);
   useShortcutHandler("undo", handleUndo);
   useShortcutHandler("redo", handleRedo);
-  useShortcutHandler("delete", handleDeleteSelectedSupport);
+  // 'delete' 핸들러는 아래의 handleDeleteSelectedSupport 선언 후에 등록한다.
 
   // ----- 자동 서포트 -----
   const handleAutoGenerate = useCallback(async () => {
@@ -226,6 +226,8 @@ const ViewerV2Page: React.FC = () => {
     if (editMode !== "support" || !selectedSupportId) return;
     void handleRemoveSupport(selectedSupportId);
   }, [editMode, selectedSupportId, handleRemoveSupport]);
+
+  useShortcutHandler("delete", handleDeleteSelectedSupport);
 
   const handleClearAllSupports = useCallback(async () => {
     if (!projectId) return;
