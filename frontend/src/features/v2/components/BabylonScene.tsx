@@ -11,7 +11,9 @@ import {
   Engine,
   HemisphericLight,
   HighlightLayer,
+  LinesMesh,
   Mesh,
+  MeshBuilder,
   Plane,
   PointerDragBehavior,
   PointerEventTypes,
@@ -33,6 +35,7 @@ import {
 } from "../utils/support-render";
 import { autoGenerateSupportPoints } from "../support/utils/auto-generate";
 import { meshesToStlBlob } from "../utils/stl-export";
+import { sliceMeshAtY } from "../utils/slice-section";
 import type { SupportParams, SupportPointV2 } from "../support/types";
 import type { EditMode } from "./EditModeControls";
 
@@ -151,6 +154,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     const supportMaterialRef = useRef<ReturnType<
       typeof createSupportMaterial
     > | null>(null);
+    const sliceOutlineRef = useRef<LinesMesh | null>(null);
     const furnitureRef = useRef<SceneFurniture | null>(null);
     const highlightRef = useRef<HighlightLayer | null>(null);
     const utilityLayerRef = useRef<UtilityLayerRenderer | null>(null);
@@ -448,6 +452,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         supportMeshMapRef.current.clear();
         supportMaterialRef.current?.dispose();
         supportMaterialRef.current = null;
+        sliceOutlineRef.current?.dispose();
+        sliceOutlineRef.current = null;
         for (const mesh of meshMapRef.current.values()) {
           mesh.dispose();
         }
@@ -573,17 +579,56 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedIds, gizmoMode, files, editMode]);
 
-    // 5.5) Z 슬라이스 미리보기 — scene.clipPlane 으로 Y > sliceY 영역 잘라냄
+    // 5.5) Z 슬라이스 미리보기:
+    //   · scene.clipPlane 으로 Y > sliceY 영역 컬링.
+    //   · sliceMeshAtY 로 모든 mesh 의 단면 segment 를 계산해서
+    //     slice 평면 위에 주황색 라인으로 그린다.
     useEffect(() => {
       const scene = sceneRef.current;
       if (!scene) return;
+
+      sliceOutlineRef.current?.dispose();
+      sliceOutlineRef.current = null;
+
       if (sliceY == null) {
         scene.clipPlane = null;
         return;
       }
-      // Plane normal (0,1,0), distance = -sliceY → y > sliceY 인 픽셀 cull.
+
+      // (1) 픽셀 컬링.
       scene.clipPlane = new Plane(0, 1, 0, -sliceY);
-    }, [sliceY]);
+
+      // (2) 단면 segment → LinesMesh.
+      const lines: Vector3[][] = [];
+      const yAt = sliceY + 0.02; // 평면과 같은 평면이면 z-fight → 살짝 위.
+      for (const mesh of meshMapRef.current.values()) {
+        const segs = sliceMeshAtY(mesh, sliceY);
+        for (const s of segs) {
+          lines.push([
+            new Vector3(s.a[0], yAt, s.a[1]),
+            new Vector3(s.b[0], yAt, s.b[1]),
+          ]);
+        }
+      }
+      for (const sm of supportMeshMapRef.current.values()) {
+        const segs = sliceMeshAtY(sm, sliceY);
+        for (const s of segs) {
+          lines.push([
+            new Vector3(s.a[0], yAt, s.a[1]),
+            new Vector3(s.b[0], yAt, s.b[1]),
+          ]);
+        }
+      }
+      if (lines.length === 0) return;
+      const m = MeshBuilder.CreateLineSystem(
+        "v2_slice_outline",
+        { lines },
+        scene,
+      );
+      m.color = new Color3(1.0, 0.55, 0.15); // 따뜻한 주황
+      m.isPickable = false;
+      sliceOutlineRef.current = m;
+    }, [sliceY, files, supports, supportParams]);
 
     // 6) editMode 변경 시:
     //    · STL 메쉬의 PointerDragBehavior detach/attach
