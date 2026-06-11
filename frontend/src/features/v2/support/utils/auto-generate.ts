@@ -37,18 +37,27 @@ export function autoGenerateSupportPoints(
   if (step <= 0) return [];
   const overhangCos = Math.cos((params.overhangAngleDeg * Math.PI) / 180);
 
+
   const points: SupportPointV2[] = [];
   const now = Date.now();
   const direction = new Vector3(0, -1, 0);
   const predicate = (m: unknown) => m === mesh;
 
+  // 진단 카운터
+  let raysCast = 0;
+  let totalHits = 0;
+  let overhangHits = 0;
+  let skippedTooLow = 0;
+
   for (let x = minX + step / 2; x < maxX; x += step) {
     for (let z = minZ + step / 2; z < maxZ; z += step) {
       const origin = new Vector3(x, yAbove, z);
       const ray = new Ray(origin, direction, rayLen);
+      raysCast++;
 
       const hits =
-        (scene.multiPickWithRay(ray, predicate as (m: Mesh) => boolean) ?? []);
+        scene.multiPickWithRay(ray, predicate as (m: Mesh) => boolean) ?? [];
+      totalHits += hits.length;
 
       for (const info of hits) {
         if (!info.hit || !info.pickedPoint) continue;
@@ -57,10 +66,14 @@ export function autoGenerateSupportPoints(
 
         // 오버행: 법선이 -Y 와 임계각 이내 → normal.y <= -cos(angle)
         if (normal.y > -overhangCos) continue;
+        overhangHits++;
 
-        // contact 가 이미 빌드플레이트 아래(또는 거의)면 자기 자신이
-        // 베드라서 서포트 의미 없음 → skip.
-        if (info.pickedPoint.y <= 0.05) continue;
+        // contact 가 빌드플레이트에 너무 붙어있으면 서포트가 0 길이라
+        // 의미 없음 → skip. 기준은 0.5mm.
+        if (info.pickedPoint.y <= 0.5) {
+          skippedTooLow++;
+          continue;
+        }
 
         points.push({
           id: crypto.randomUUID(),
@@ -78,6 +91,19 @@ export function autoGenerateSupportPoints(
       }
     }
   }
+
+  // eslint-disable-next-line no-console
+  console.log(
+    `[v2 auto] stl=${stlId.slice(0, 8)} ` +
+      `rays=${raysCast} hits=${totalHits} overhang=${overhangHits} ` +
+      `skipTooLow=${skippedTooLow} → points=${points.length} ` +
+      `(spacing=${step}mm, angle≤${params.overhangAngleDeg}°)`,
+  );
+  console.log(
+    `[v2 auto] world AABB X(${minX.toFixed(1)}..${maxX.toFixed(1)}) ` +
+      `Y(${bb.minimumWorld.y.toFixed(1)}..${bb.maximumWorld.y.toFixed(1)}) ` +
+      `Z(${minZ.toFixed(1)}..${maxZ.toFixed(1)})`,
+  );
 
   return points;
 }

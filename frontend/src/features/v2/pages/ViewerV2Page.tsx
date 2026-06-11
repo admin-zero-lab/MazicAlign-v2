@@ -136,13 +136,25 @@ const ViewerV2Page: React.FC = () => {
   // ----- 자동 서포트 -----
   const handleAutoGenerate = useCallback(async () => {
     if (!projectId || autoBusy) return;
-    if (files.length === 0) return;
+    if (files.length === 0) {
+      alert("STL 파일을 먼저 불러오세요.");
+      return;
+    }
     setAutoBusy(true);
     try {
       const generated =
         sceneHandleRef.current?.generateAutoSupports(projectId, supportParams) ??
         [];
-      if (generated.length === 0) return;
+      // eslint-disable-next-line no-console
+      console.log(`[v2 auto] total generated: ${generated.length}`);
+      if (generated.length === 0) {
+        alert(
+          "오버행 면을 찾지 못했습니다.\n" +
+            "임계각을 키우거나(예: 60°), 접점 간격을 작게(예: 2mm) 해보세요.\n" +
+            "콘솔(F12)에서 [v2 auto] 로그도 함께 확인할 수 있습니다.",
+        );
+        return;
+      }
 
       const ids = generated.map((p) => p.id);
       await addSupports(generated);
