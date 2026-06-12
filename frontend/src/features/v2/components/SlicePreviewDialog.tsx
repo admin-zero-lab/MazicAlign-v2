@@ -181,10 +181,11 @@ const SlicePreviewDialog: React.FC<Props> = ({
                   </button>
                   <button
                     onClick={onExportCtb}
-                    disabled={modelCount === 0}
-                    className="px-3 py-2 text-sm border border-primary-600 text-primary-700 rounded hover:bg-primary-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    disabled
+                    title="ChiTuBox 강제 종료 — spec 재검토 중. 별도 commit 으로 다시 활성화 예정."
+                    className="px-3 py-2 text-sm border border-gray-300 text-gray-400 rounded cursor-not-allowed"
                   >
-                    .ctb v3 (실험적)
+                    .ctb (검증 중)
                   </button>
                 </div>
               )}

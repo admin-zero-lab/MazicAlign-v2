@@ -29,6 +29,8 @@ import EditModeControls, {
   type EditMode,
 } from "../components/EditModeControls";
 import SlicePreviewDialog from "../components/SlicePreviewDialog";
+import PrinterProfileSelect from "../components/PrinterProfileSelect";
+import { useCurrentProfile } from "../hooks/usePrinterProfileStore";
 import { IDENTITY_TRANSFORM, type TransformV2 } from "../types/transform";
 
 /**
@@ -89,6 +91,8 @@ const ViewerV2Page: React.FC = () => {
     (s) => s.params.overhangAngleDeg,
   );
   const supportParams = useSupportParamsStore((s) => s.params);
+
+  const printerProfile = useCurrentProfile();
 
   useShortcutsListener();
 
@@ -261,8 +265,8 @@ const ViewerV2Page: React.FC = () => {
     try {
       const blob = await exportLayersAsPngZip(handle, {
         layerHeightMm: slicePreview.layerHeightMm,
-        widthPx: 1024,
-        heightPx: 640,
+        widthPx: printerProfile.lcdWidthPx,
+        heightPx: printerProfile.lcdHeightPx,
         onProgress: (done, total) =>
           setBatchExport({ busy: true, done, total }),
       });
@@ -292,11 +296,11 @@ const ViewerV2Page: React.FC = () => {
     try {
       const blob = await makeCtbV4(handle, {
         layerHeightMm: slicePreview.layerHeightMm,
-        resolutionX: 4098,
-        resolutionY: 2560,
-        bedSizeXMm: 143.43,
-        bedSizeYMm: 89.6,
-        bedSizeZMm: 175.0,
+        resolutionX: printerProfile.lcdWidthPx,
+        resolutionY: printerProfile.lcdHeightPx,
+        bedSizeXMm: printerProfile.buildVolumeMm[0],
+        bedSizeYMm: printerProfile.buildVolumeMm[1],
+        bedSizeZMm: printerProfile.buildVolumeMm[2],
         onProgress: (done, total) =>
           setBatchExport({ busy: true, done, total }),
       });
@@ -419,6 +423,7 @@ const ViewerV2Page: React.FC = () => {
           </div>
 
           <div className="flex items-center space-x-2">
+            <PrinterProfileSelect />
             <button
               onClick={() => {
                 setSlicePreview((s) => {
