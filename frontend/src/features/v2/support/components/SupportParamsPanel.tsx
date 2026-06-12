@@ -3,6 +3,39 @@ import {
   SUPPORT_PARAM_LIMITS,
   DEFAULT_SUPPORT_PARAMS,
 } from "../utils/defaults";
+import type { SupportParams } from "../types";
+
+type Preset = "light" | "medium" | "heavy";
+
+const PRESETS: Record<Preset, Partial<SupportParams>> = {
+  light: {
+    overhangAngleDeg: 35,
+    contactSpacingMm: 8,
+    trunkDiameterMm: 0.6,
+    tipDiameterMm: 0.3,
+    baseDiameterMm: 1.2,
+  },
+  medium: {
+    overhangAngleDeg: 45,
+    contactSpacingMm: 4,
+    trunkDiameterMm: 0.8,
+    tipDiameterMm: 0.4,
+    baseDiameterMm: 1.5,
+  },
+  heavy: {
+    overhangAngleDeg: 55,
+    contactSpacingMm: 2.5,
+    trunkDiameterMm: 1.0,
+    tipDiameterMm: 0.5,
+    baseDiameterMm: 2.0,
+  },
+};
+
+const PRESET_LABEL: Record<Preset, string> = {
+  light: "Light",
+  medium: "Medium",
+  heavy: "Heavy",
+};
 
 interface SupportParamsPanelProps {
   /** 자동 생성 동작. 없으면 버튼 비활성. */
@@ -47,6 +80,26 @@ const SupportParamsPanel: React.FC<SupportParamsPanelProps> = ({
         >
           Reset
         </button>
+      </div>
+
+      <div className="mb-3 flex items-center gap-1">
+        <span className="text-xs font-semibold text-gray-600 mr-1">프리셋</span>
+        {(Object.keys(PRESETS) as Preset[]).map((p) => (
+          <button
+            key={p}
+            onClick={() => {
+              const patch = PRESETS[p];
+              for (const k of Object.keys(patch) as Array<
+                keyof SupportParams
+              >) {
+                setParam(k, patch[k] as never);
+              }
+            }}
+            className="flex-1 px-2 py-1 text-xs border border-gray-300 rounded hover:bg-primary-50 hover:border-primary-400 hover:text-primary-700 transition-colors"
+          >
+            {PRESET_LABEL[p]}
+          </button>
+        ))}
       </div>
 
       <div className="mb-4 flex items-center justify-between">
