@@ -30,6 +30,7 @@ import EditModeControls, {
 } from "../components/EditModeControls";
 import SlicePreviewDialog from "../components/SlicePreviewDialog";
 import PrinterProfileSelect from "../components/PrinterProfileSelect";
+import PrinterProfileDialog from "../components/PrinterProfileDialog";
 import { useCurrentProfile } from "../hooks/usePrinterProfileStore";
 import { IDENTITY_TRANSFORM, type TransformV2 } from "../types/transform";
 
@@ -78,6 +79,7 @@ const ViewerV2Page: React.FC = () => {
     done: number;
     total: number;
   }>({ busy: false, done: 0, total: 0 });
+  const [profileDialogOpen, setProfileDialogOpen] = useState(false);
 
   // sliceY = (layerIdx + 0.5) × layerHeight — 레이어 중심을 픽업
   const sliceYNow =
@@ -459,7 +461,7 @@ const ViewerV2Page: React.FC = () => {
           </div>
 
           <div className="flex items-center space-x-2">
-            <PrinterProfileSelect />
+            <PrinterProfileSelect onEdit={() => setProfileDialogOpen(true)} />
             <button
               onClick={() => {
                 setSlicePreview((s) => {
@@ -640,6 +642,11 @@ const ViewerV2Page: React.FC = () => {
           onClose={() => setBrowserOpen(false)}
         />
       )}
+
+      <PrinterProfileDialog
+        open={profileDialogOpen}
+        onClose={() => setProfileDialogOpen(false)}
+      />
 
       <SlicePreviewDialog
         open={slicePreview.on}
