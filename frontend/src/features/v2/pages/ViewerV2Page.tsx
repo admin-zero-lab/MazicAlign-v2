@@ -15,6 +15,7 @@ import * as supportRepo from "../data/supports.repo";
 import type { SupportPointV2 } from "../support/types";
 import { downloadBlob } from "../utils/stl-export";
 import { exportLayersAsPngZip } from "../utils/slice-batch";
+import { makeCtbV4 } from "../utils/ctb-encoder";
 import BabylonScene, {
   type BabylonSceneHandle,
   type GizmoMode,
@@ -282,6 +283,34 @@ const ViewerV2Page: React.FC = () => {
     batchExport.busy,
   ]);
 
+  // ----- .ctb v4 내보내기 -----
+  const handleExportCtb = useCallback(async () => {
+    const handle = sceneHandleRef.current;
+    if (!handle || files.length === 0) return;
+    if (batchExport.busy) return;
+    setBatchExport({ busy: true, done: 0, total: 0 });
+    try {
+      const blob = await makeCtbV4(handle, {
+        layerHeightMm: slicePreview.layerHeightMm,
+        resolutionX: 4098,
+        resolutionY: 2560,
+        bedSizeXMm: 143.43,
+        bedSizeYMm: 89.6,
+        bedSizeZMm: 175.0,
+        onProgress: (done, total) =>
+          setBatchExport({ busy: true, done, total }),
+      });
+      if (!blob) return;
+      const safe = (project?.name ?? "project").replace(
+        /[\\/:*?"<>|]/g,
+        "_",
+      );
+      downloadBlob(blob, `${safe}.ctb`);
+    } finally {
+      setBatchExport({ busy: false, done: 0, total: 0 });
+    }
+  }, [files.length, project?.name, slicePreview.layerHeightMm, batchExport.busy]);
+
   // ----- STL 내보내기 -----
   const handleExportStl = useCallback(() => {
     if (files.length === 0) return;
@@ -527,6 +556,13 @@ const ViewerV2Page: React.FC = () => {
                   {batchExport.busy
                     ? `${batchExport.done}/${batchExport.total}`
                     : "마스크 ZIP"}
+                </button>
+                <button
+                  onClick={() => void handleExportCtb()}
+                  disabled={batchExport.busy || files.length === 0}
+                  className="px-2 py-0.5 text-xs border border-primary-600 text-primary-700 rounded hover:bg-primary-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  .ctb v4
                 </button>
               </div>
 
