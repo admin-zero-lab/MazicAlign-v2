@@ -14,6 +14,7 @@ import { SupportParamsPanel, useSupportParamsStore } from "../support";
 import * as supportRepo from "../data/supports.repo";
 import type { SupportPointV2 } from "../support/types";
 import { downloadBlob } from "../utils/stl-export";
+import { exportLayersAsPngZip } from "../utils/slice-batch";
 import BabylonScene, {
   type BabylonSceneHandle,
   type GizmoMode,
@@ -68,6 +69,11 @@ const ViewerV2Page: React.FC = () => {
     layerHeightMm: number;
   }>({ on: false, layerIdx: 0, layerHeightMm: 0.05 });
   const [sceneTopY, setSceneTopY] = useState(0);
+  const [batchExport, setBatchExport] = useState<{
+    busy: boolean;
+    done: number;
+    total: number;
+  }>({ busy: false, done: 0, total: 0 });
 
   // sliceY = (layerIdx + 0.5) × layerHeight — 레이어 중심을 픽업
   const sliceYNow =
@@ -244,6 +250,37 @@ const ViewerV2Page: React.FC = () => {
   }, [editMode, selectedSupportId, handleRemoveSupport]);
 
   useShortcutHandler("delete", handleDeleteSelectedSupport);
+
+  // ----- 마스크 ZIP 내보내기 -----
+  const handleExportMasksZip = useCallback(async () => {
+    const handle = sceneHandleRef.current;
+    if (!handle || files.length === 0) return;
+    if (batchExport.busy) return;
+    setBatchExport({ busy: true, done: 0, total: 0 });
+    try {
+      const blob = await exportLayersAsPngZip(handle, {
+        layerHeightMm: slicePreview.layerHeightMm,
+        widthPx: 1024,
+        heightPx: 640,
+        onProgress: (done, total) =>
+          setBatchExport({ busy: true, done, total }),
+      });
+      if (!blob) return;
+      const safe = (project?.name ?? "project").replace(
+        /[\\/:*?"<>|]/g,
+        "_",
+      );
+      const lh = slicePreview.layerHeightMm.toFixed(3).replace(".", "_");
+      downloadBlob(blob, `${safe}_layers_${lh}mm.zip`);
+    } finally {
+      setBatchExport({ busy: false, done: 0, total: 0 });
+    }
+  }, [
+    files.length,
+    project?.name,
+    slicePreview.layerHeightMm,
+    batchExport.busy,
+  ]);
 
   // ----- STL 내보내기 -----
   const handleExportStl = useCallback(() => {
@@ -482,6 +519,15 @@ const ViewerV2Page: React.FC = () => {
                 <span className="ml-auto text-xs text-gray-500">
                   총 {layerCount} 레이어 · top {sceneTopY.toFixed(2)} mm
                 </span>
+                <button
+                  onClick={() => void handleExportMasksZip()}
+                  disabled={batchExport.busy || files.length === 0}
+                  className="px-2 py-0.5 text-xs bg-primary-600 text-white rounded hover:bg-primary-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  {batchExport.busy
+                    ? `${batchExport.done}/${batchExport.total}`
+                    : "마스크 ZIP"}
+                </button>
               </div>
 
               <div className="flex items-center gap-3">
