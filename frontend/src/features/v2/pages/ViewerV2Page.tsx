@@ -28,7 +28,7 @@ import GizmoControls from "../components/GizmoControls";
 import EditModeControls, {
   type EditMode,
 } from "../components/EditModeControls";
-import SlicePreviewDialog from "../components/SlicePreviewDialog";
+import SliceSidePanel from "../components/SliceSidePanel";
 import PrinterProfileSelect from "../components/PrinterProfileSelect";
 import PrinterProfileDialog from "../components/PrinterProfileDialog";
 import { useCurrentProfile } from "../hooks/usePrinterProfileStore";
@@ -614,6 +614,36 @@ const ViewerV2Page: React.FC = () => {
           </div>
         </main>
 
+        {slicePreview.on && (
+          <SliceSidePanel
+            onClose={() =>
+              setSlicePreview({
+                on: false,
+                layerIdx: 0,
+                layerHeightMm: 0.05,
+              })
+            }
+            sceneHandleRef={sceneHandleRef}
+            sliceYNow={sliceYNow}
+            layerIdx={slicePreview.layerIdx}
+            layerHeightMm={slicePreview.layerHeightMm}
+            layerCount={layerCount}
+            sceneTopY={sceneTopY}
+            onLayerIdxChange={(i) =>
+              setSlicePreview((s) => ({ ...s, layerIdx: i }))
+            }
+            onLayerHeightChange={(mm) =>
+              setSlicePreview((s) => ({ ...s, layerHeightMm: mm }))
+            }
+            onExportMasksZip={() => void handleExportMasksZip()}
+            onExportCtb={() => void handleExportCtb()}
+            batchBusy={batchExport.busy}
+            batchDone={batchExport.done}
+            batchTotal={batchExport.total}
+            modelCount={files.length}
+          />
+        )}
+
         <aside className="w-80 border-l bg-white overflow-y-auto">
           {error && (
             <p className="text-red-600 text-sm m-4">
@@ -648,30 +678,6 @@ const ViewerV2Page: React.FC = () => {
         onClose={() => setProfileDialogOpen(false)}
       />
 
-      <SlicePreviewDialog
-        open={slicePreview.on}
-        onClose={() =>
-          setSlicePreview({ on: false, layerIdx: 0, layerHeightMm: 0.05 })
-        }
-        sceneHandleRef={sceneHandleRef}
-        sliceYNow={sliceYNow}
-        layerIdx={slicePreview.layerIdx}
-        layerHeightMm={slicePreview.layerHeightMm}
-        layerCount={layerCount}
-        sceneTopY={sceneTopY}
-        onLayerIdxChange={(i) =>
-          setSlicePreview((s) => ({ ...s, layerIdx: i }))
-        }
-        onLayerHeightChange={(mm) =>
-          setSlicePreview((s) => ({ ...s, layerHeightMm: mm }))
-        }
-        onExportMasksZip={() => void handleExportMasksZip()}
-        onExportCtb={() => void handleExportCtb()}
-        batchBusy={batchExport.busy}
-        batchDone={batchExport.done}
-        batchTotal={batchExport.total}
-        modelCount={files.length}
-      />
     </div>
   );
 };
