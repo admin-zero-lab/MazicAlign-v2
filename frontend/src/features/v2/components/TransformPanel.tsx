@@ -140,6 +140,36 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
             onEnd={endDrag}
           />
         ))}
+        <div className="flex flex-wrap gap-1 mt-1">
+          {(
+            [
+              { key: "rx", delta: 90, label: "X +90°" },
+              { key: "rx", delta: -90, label: "X −90°" },
+              { key: "ry", delta: 90, label: "Y +90°" },
+              { key: "ry", delta: -90, label: "Y −90°" },
+              { key: "rz", delta: 90, label: "Z +90°" },
+              { key: "rz", delta: -90, label: "Z −90°" },
+            ] as const
+          ).map(({ key, delta, label }) => (
+            <button
+              key={label}
+              onClick={() => {
+                const start = { ...local };
+                let next = start[key] + delta;
+                // ±180 안으로 정규화.
+                while (next > 180) next -= 360;
+                while (next <= -180) next += 360;
+                const end = { ...start, [key]: next };
+                setLocal(end);
+                onPreview(selected!.id, end);
+                onCommit(selected!.id, start, end);
+              }}
+              className="px-2 py-0.5 text-xs border border-gray-300 rounded hover:bg-gray-100"
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </Section>
 
       <Section title="Scale (×)">
