@@ -60,6 +60,31 @@ export async function addSupports(
   });
 }
 
+export async function updateSupport(
+  id: string,
+  patch: Partial<
+    Omit<SupportPointV2, "id" | "projectId" | "addedAt">
+  >,
+): Promise<void> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_SUPPORTS, "readwrite");
+    const store = tx.objectStore(STORE_SUPPORTS);
+    const getReq = store.get(id);
+    getReq.onsuccess = () => {
+      const existing = getReq.result as SupportPointV2 | undefined;
+      if (!existing) {
+        tx.abort();
+        reject(new Error(`support not found: ${id}`));
+        return;
+      }
+      store.put({ ...existing, ...patch });
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 export async function deleteSupport(id: string): Promise<void> {
   const db = await openDb();
   return new Promise((resolve, reject) => {

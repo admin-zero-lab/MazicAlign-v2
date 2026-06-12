@@ -102,6 +102,12 @@ interface BabylonSceneProps {
   /** 현재 선택된 기둥 id (highlight 표시용). */
   selectedSupportId: string | null;
   /**
+   * 선택된 기둥의 Gizmo 드래그가 끝났을 때 호출.
+   * newBaseXZ = 새 (X, Z) world 좌표. Y 는 0 으로 고정.
+   * contact 의 Y 는 호출 측에서 옛 값을 유지한다.
+   */
+  onMoveSupport: (id: string, newBaseXZ: [number, number]) => void;
+  /**
    * Z 슬라이스 미리보기 높이 (mm). null 이면 비활성.
    * 활성 시 Y > sliceY 영역의 메쉬가 잘려 단면이 보인다.
    */
@@ -163,6 +169,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       onAddSupportAt,
       onPickSupport,
       selectedSupportId,
+      onMoveSupport,
       sliceY,
       className = "",
     },
@@ -176,6 +183,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     const dragBehaviorMapRef = useRef<Map<string, PointerDragBehavior>>(
       new Map(),
     );
+    const supportsRef = useRef<SupportPointV2[]>(supports);
+    supportsRef.current = supports;
     const supportMeshMapRef = useRef<Map<string, Mesh>>(new Map());
     const supportMaterialRef = useRef<ReturnType<
       typeof createSupportMaterial
@@ -194,9 +203,11 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     const positionGizmoRef = useRef<PositionGizmo | null>(null);
     const rotationGizmoRef = useRef<RotationGizmo | null>(null);
     const scaleGizmoRef = useRef<ScaleGizmo | null>(null);
-    const gizmoDragStartRef = useRef<{ id: string; t: TransformV2 } | null>(
-      null,
-    );
+    const gizmoDragStartRef = useRef<
+      | { kind: "stl"; id: string; t: TransformV2 }
+      | { kind: "support"; id: string }
+      | null
+    >(null);
     const gizmoModeRef = useRef<GizmoMode>(gizmoMode);
     gizmoModeRef.current = gizmoMode;
 
@@ -215,6 +226,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     onAddSupportRef.current = onAddSupportAt;
     const onPickSupportRef = useRef(onPickSupport);
     onPickSupportRef.current = onPickSupport;
+    const onMoveSupportRef = useRef(onMoveSupport);
+    onMoveSupportRef.current = onMoveSupport;
     const selectedSupportRef = useRef<string | null>(selectedSupportId);
     selectedSupportRef.current = selectedSupportId;
     const selectedRef = useRef<ReadonlySet<string>>(selectedIds);
@@ -252,6 +265,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
 
       drag.onDragStartObservable.add(() => {
         gizmoDragStartRef.current = {
+          kind: "stl",
           id: fileId,
           t: readMeshTransform(mesh),
         };
@@ -259,7 +273,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       drag.onDragEndObservable.add(() => {
         const started = gizmoDragStartRef.current;
         gizmoDragStartRef.current = null;
-        if (!started) return;
+        if (!started || started.kind !== "stl") return;
         const end = readMeshTransform(mesh);
         onGizmoCommitRef.current(started.id, started.t, end);
       });
@@ -277,16 +291,25 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       const sg = scaleGizmoRef.current;
       if (!pg || !rg || !sg) return;
 
+      // 'support' 모드 + 선택된 기둥 → PositionGizmo 만 기둥에 attach.
+      if (editModeRef.current === "support") {
+        const sid = selectedSupportRef.current;
+        const sMesh = sid ? supportMeshMapRef.current.get(sid) ?? null : null;
+        pg.attachedMesh = sMesh;
+        rg.attachedMesh = null;
+        sg.attachedMesh = null;
+        return;
+      }
+
+      // 'select' 모드: 단일 STL 선택 + 사용자 gizmoMode 에 따라.
       const sel = Array.from(selectedRef.current);
       const single = sel.length === 1 ? sel[0] : null;
       const mesh = single ? meshMapRef.current.get(single) ?? null : null;
       const mode = gizmoModeRef.current;
 
-      // 'support' 모드면 Gizmo 강제 detach.
-      const allow = editModeRef.current === "select";
-      pg.attachedMesh = allow && mode === "translate" ? mesh : null;
-      rg.attachedMesh = allow && mode === "rotate" ? mesh : null;
-      sg.attachedMesh = allow && mode === "scale" ? mesh : null;
+      pg.attachedMesh = mode === "translate" ? mesh : null;
+      rg.attachedMesh = mode === "rotate" ? mesh : null;
+      sg.attachedMesh = mode === "scale" ? mesh : null;
     }
 
     // 1) 씬 부트스트랩
@@ -395,17 +418,44 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       scaleGizmo.scaleRatio = SCALE;
 
       const onDragStart = () => {
+        // PositionGizmo 가 support mesh 에 붙어있으면 support 이동 모드.
+        const attached = positionGizmo.attachedMesh;
+        if (attached) {
+          const meta = (attached as { metadata?: { type?: string; supportId?: string } })
+            .metadata;
+          if (meta?.type === "support" && meta.supportId) {
+            gizmoDragStartRef.current = {
+              kind: "support",
+              id: meta.supportId,
+            };
+            return;
+          }
+        }
+        // STL transform (기존).
         const sel = Array.from(selectedRef.current);
         if (sel.length !== 1) return;
         const id = sel[0];
         const mesh = meshMapRef.current.get(id);
         if (!mesh) return;
-        gizmoDragStartRef.current = { id, t: readMeshTransform(mesh) };
+        gizmoDragStartRef.current = {
+          kind: "stl",
+          id,
+          t: readMeshTransform(mesh),
+        };
       };
       const onDragEnd = () => {
         const started = gizmoDragStartRef.current;
         gizmoDragStartRef.current = null;
         if (!started) return;
+        if (started.kind === "support") {
+          const sMesh = supportMeshMapRef.current.get(started.id);
+          if (!sMesh) return;
+          onMoveSupportRef.current(started.id, [
+            sMesh.position.x,
+            sMesh.position.z,
+          ]);
+          return;
+        }
         const mesh = meshMapRef.current.get(started.id);
         if (!mesh) return;
         const end = readMeshTransform(mesh);
@@ -642,11 +692,11 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedIds, selectedSupportId]);
 
-    // 5) Gizmo: 선택 / 모드 / files / editMode 변경 시 attach 재계산
+    // 5) Gizmo: 선택 / 모드 / files / editMode / supports / selectedSupportId 변경 시 attach 재계산
     useEffect(() => {
       syncGizmo();
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selectedIds, gizmoMode, files, editMode]);
+    }, [selectedIds, gizmoMode, files, editMode, supports, selectedSupportId]);
 
     // 5.5) Z 슬라이스 미리보기:
     //   · scene.clipPlane 으로 Y > sliceY 영역 컬링.

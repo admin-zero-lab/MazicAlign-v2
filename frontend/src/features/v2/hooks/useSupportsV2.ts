@@ -55,6 +55,24 @@ export function useSupportsV2(projectId: string | undefined) {
     await refresh();
   }, [projectId, refresh]);
 
+  /**
+   * 단일 SupportPoint 의 contact / base 등을 patch.
+   * 호출 측에서 정확한 좌표를 만들어 전달한다 (예: contact 의 Y 유지).
+   */
+  const patchSupport = useCallback(
+    async (
+      id: string,
+      patch: Partial<{
+        contact: [number, number, number];
+        base: [number, number, number];
+      }>,
+    ) => {
+      await repo.updateSupport(id, patch);
+      await refresh();
+    },
+    [refresh],
+  );
+
   const clearForStl = useCallback(
     async (stlId: string) => {
       await repo.deleteSupportsByStl(stlId);
@@ -72,5 +90,6 @@ export function useSupportsV2(projectId: string | undefined) {
     remove,
     clearAll,
     clearForStl,
+    patchSupport,
   };
 }

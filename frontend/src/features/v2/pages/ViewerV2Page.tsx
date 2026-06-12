@@ -54,6 +54,7 @@ const ViewerV2Page: React.FC = () => {
     addMany: addSupports,
     clearAll: clearAllSupports,
     refresh: refreshSupports,
+    patchSupport,
   } = useSupportsV2(projectId);
 
   const [browserOpen, setBrowserOpen] = useState(false);
@@ -247,6 +248,39 @@ const ViewerV2Page: React.FC = () => {
       });
     },
     [supports, addSupports, refreshSupports, selectedSupportId],
+  );
+
+  const handleMoveSupport = useCallback(
+    async (id: string, newBaseXZ: [number, number]) => {
+      const target = supports.find((s) => s.id === id);
+      if (!target) return;
+
+      const oldContact: [number, number, number] = [...target.contact];
+      const oldBase: [number, number, number] = [...target.base];
+      const newContact: [number, number, number] = [
+        newBaseXZ[0],
+        target.contact[1], // contact 의 Y 는 유지
+        newBaseXZ[1],
+      ];
+      const newBase: [number, number, number] = [
+        newBaseXZ[0],
+        0,
+        newBaseXZ[1],
+      ];
+
+      await patchSupport(id, { contact: newContact, base: newBase });
+
+      useUndoStore.getState().push({
+        label: "move-support",
+        undo: async () => {
+          await patchSupport(id, { contact: oldContact, base: oldBase });
+        },
+        redo: async () => {
+          await patchSupport(id, { contact: newContact, base: newBase });
+        },
+      });
+    },
+    [supports, patchSupport],
   );
 
   const handleDeleteSelectedSupport = useCallback(() => {
@@ -488,6 +522,7 @@ const ViewerV2Page: React.FC = () => {
             onAddSupportAt={handleAddSupportAt}
             onPickSupport={setSelectedSupportId}
             selectedSupportId={selectedSupportId}
+            onMoveSupport={handleMoveSupport}
             sliceY={slicePreview.on ? sliceYNow : null}
           />
 
