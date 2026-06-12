@@ -1,5 +1,25 @@
+import { useMemo } from "react";
+
 import type { BabylonSceneHandle } from "./BabylonScene";
 import SliceMaskPreview from "./SliceMaskPreview";
+
+/** SLA 레진 평균 밀도 (g/cm³). 메이커마다 1.05 ~ 1.15. */
+const RESIN_DENSITY_G_PER_CM3 = 1.1;
+/** 일반 SLA exposure (초). */
+const NORMAL_EXPOSURE_SEC = 2.5;
+/** 첫 N 레이어는 바닥 exposure. */
+const BOTTOM_LAYERS = 5;
+const BOTTOM_EXPOSURE_SEC = 30;
+
+function formatDuration(sec: number): string {
+  if (sec < 60) return `${Math.round(sec)}초`;
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  if (m < 60) return `${m}분 ${s}초`;
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  return `${h}시간 ${mm}분`;
+}
 
 interface Props {
   onClose: () => void;
@@ -48,6 +68,26 @@ const SliceSidePanel: React.FC<Props> = ({
 }) => {
   const safeLayerIdx = Math.min(layerIdx, Math.max(0, layerCount - 1));
 
+  // 출력 시간·레진 추정. modelCount / layerCount / sceneTopY 가 바뀔
+  // 때만 다시 계산. mesh transform 이 바뀌면 sceneTopY 가 함께 갱신
+  // 되니 무관해 보여도 dep 에 들어가야 정확.
+  const stats = useMemo(() => {
+    const handle = sceneHandleRef.current;
+    if (!handle || modelCount === 0) {
+      return { volumeMl: 0, resinG: 0, printSec: 0 };
+    }
+    const { model, support } = handle.getBuildVolumeMm3();
+    const volumeMm3 = model + support;
+    const volumeMl = volumeMm3 / 1000;
+    const resinG = volumeMl * RESIN_DENSITY_G_PER_CM3;
+    const bottomCount = Math.min(BOTTOM_LAYERS, layerCount);
+    const printSec =
+      bottomCount * BOTTOM_EXPOSURE_SEC +
+      Math.max(0, layerCount - bottomCount) * NORMAL_EXPOSURE_SEC;
+    return { volumeMl, resinG, printSec };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modelCount, layerCount, sceneTopY, sceneHandleRef]);
+
   return (
     <aside className="w-[420px] border-l border-gray-200 bg-white flex flex-col overflow-y-auto">
       <header className="flex items-center justify-between px-4 py-3 border-b">
@@ -78,6 +118,26 @@ const SliceSidePanel: React.FC<Props> = ({
             heightPx={240}
           />
         </div>
+
+        <Card title="출력 추정">
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
+            <span className="text-gray-500">레진 부피</span>
+            <span className="text-gray-800 font-mono text-right">
+              {stats.volumeMl.toFixed(2)} ml
+            </span>
+            <span className="text-gray-500">레진 무게</span>
+            <span className="text-gray-800 font-mono text-right">
+              {stats.resinG.toFixed(2)} g
+            </span>
+            <span className="text-gray-500">출력 시간</span>
+            <span className="text-gray-800 font-mono text-right">
+              {formatDuration(stats.printSec)}
+            </span>
+          </div>
+          <p className="text-xs text-gray-400 mt-1">
+            기준: 노광 2.5s · 바닥 5층 30s · 레진 ~1.1 g/cm³
+          </p>
+        </Card>
 
         <Card title="레이어 두께">
           <div className="flex items-center gap-2">

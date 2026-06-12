@@ -35,6 +35,7 @@ import {
 } from "../utils/support-render";
 import { autoGenerateSupportPoints } from "../support/utils/auto-generate";
 import { meshesToStlBlob } from "../utils/stl-export";
+import { computeMeshVolumeMm3 } from "../utils/mesh-volume";
 import { chainSegments, sliceMeshAtY } from "../utils/slice-section";
 import {
   buildPolygonFillMesh,
@@ -150,6 +151,10 @@ export interface BabylonSceneHandle {
    * 슬라이서가 layer count 를 계산할 때 쓴다.
    */
   getSceneTopY: () => number;
+  /**
+   * 모델 + 서포트의 부피 (mm³) 합. 출력 시간 / 레진 사용량 추정용.
+   */
+  getBuildVolumeMm3: () => { model: number; support: number };
 }
 
 const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
@@ -877,6 +882,17 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
             if (y > top) top = y;
           }
           return top;
+        },
+        getBuildVolumeMm3() {
+          let model = 0;
+          for (const mesh of meshMapRef.current.values()) {
+            model += computeMeshVolumeMm3(mesh);
+          }
+          let support = 0;
+          for (const sm of supportMeshMapRef.current.values()) {
+            support += computeMeshVolumeMm3(sm);
+          }
+          return { model, support };
         },
       }),
       [],
