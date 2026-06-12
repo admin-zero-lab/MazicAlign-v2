@@ -28,7 +28,7 @@ import GizmoControls from "../components/GizmoControls";
 import EditModeControls, {
   type EditMode,
 } from "../components/EditModeControls";
-import SliceMaskPreview from "../components/SliceMaskPreview";
+import SlicePreviewDialog from "../components/SlicePreviewDialog";
 import { IDENTITY_TRANSFORM, type TransformV2 } from "../types/transform";
 
 /**
@@ -305,7 +305,7 @@ const ViewerV2Page: React.FC = () => {
         /[\\/:*?"<>|]/g,
         "_",
       );
-      downloadBlob(blob, `${safe}.ctb`);
+      downloadBlob(blob, `${safe}_v3.ctb`);
     } finally {
       setBatchExport({ busy: false, done: 0, total: 0 });
     }
@@ -517,105 +517,6 @@ const ViewerV2Page: React.FC = () => {
             </div>
           )}
 
-          {slicePreview.on && (
-            <div className="absolute bottom-16 left-1/2 -translate-x-1/2 flex flex-col items-stretch gap-2 bg-white/95 backdrop-blur rounded-md shadow px-4 py-3 text-sm text-gray-700 min-w-[420px]">
-              <SliceMaskPreview
-                sceneHandleRef={sceneHandleRef}
-                sliceY={sliceYNow}
-                widthPx={400}
-                heightPx={250}
-                className="mx-auto"
-              />
-
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-semibold text-gray-600 whitespace-nowrap">
-                  레이어 두께
-                </span>
-                <input
-                  type="number"
-                  min={0.01}
-                  max={0.3}
-                  step={0.005}
-                  value={slicePreview.layerHeightMm}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    if (Number.isNaN(v) || v <= 0) return;
-                    setSlicePreview((s) => ({ ...s, layerHeightMm: v }));
-                  }}
-                  className="w-24 px-2 py-1 text-sm border border-gray-300 rounded"
-                />
-                <span className="text-xs text-gray-500">mm</span>
-                <span className="ml-auto text-xs text-gray-500">
-                  총 {layerCount} 레이어 · top {sceneTopY.toFixed(2)} mm
-                </span>
-                <button
-                  onClick={() => void handleExportMasksZip()}
-                  disabled={batchExport.busy || files.length === 0}
-                  className="px-2 py-0.5 text-xs bg-primary-600 text-white rounded hover:bg-primary-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  {batchExport.busy
-                    ? `${batchExport.done}/${batchExport.total}`
-                    : "마스크 ZIP"}
-                </button>
-                <button
-                  onClick={() => void handleExportCtb()}
-                  disabled={batchExport.busy || files.length === 0}
-                  className="px-2 py-0.5 text-xs border border-primary-600 text-primary-700 rounded hover:bg-primary-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  .ctb v4
-                </button>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-semibold text-gray-600 whitespace-nowrap">
-                  레이어
-                </span>
-                <input
-                  type="range"
-                  min={0}
-                  max={layerCount - 1}
-                  step={1}
-                  value={Math.min(slicePreview.layerIdx, layerCount - 1)}
-                  onChange={(e) =>
-                    setSlicePreview((s) => ({
-                      ...s,
-                      layerIdx: Number(e.target.value),
-                    }))
-                  }
-                  className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                />
-                <input
-                  type="number"
-                  min={0}
-                  max={layerCount - 1}
-                  step={1}
-                  value={Math.min(slicePreview.layerIdx, layerCount - 1)}
-                  onChange={(e) =>
-                    setSlicePreview((s) => ({
-                      ...s,
-                      layerIdx: Number(e.target.value),
-                    }))
-                  }
-                  className="w-20 px-2 py-1 text-sm border border-gray-300 rounded"
-                />
-                <span className="text-xs text-gray-500 font-mono">
-                  Z={sliceYNow.toFixed(3)} mm
-                </span>
-                <button
-                  onClick={() =>
-                    setSlicePreview({
-                      on: false,
-                      layerIdx: 0,
-                      layerHeightMm: 0.05,
-                    })
-                  }
-                  className="ml-2 px-2 py-0.5 text-xs text-gray-600 hover:bg-gray-100 rounded"
-                >
-                  닫기
-                </button>
-              </div>
-            </div>
-          )}
 
           {files.length > 0 ? (
             <div className="absolute bottom-3 left-3 bg-white/90 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-700 space-y-1 pointer-events-none">
@@ -694,6 +595,31 @@ const ViewerV2Page: React.FC = () => {
           onClose={() => setBrowserOpen(false)}
         />
       )}
+
+      <SlicePreviewDialog
+        open={slicePreview.on}
+        onClose={() =>
+          setSlicePreview({ on: false, layerIdx: 0, layerHeightMm: 0.05 })
+        }
+        sceneHandleRef={sceneHandleRef}
+        sliceYNow={sliceYNow}
+        layerIdx={slicePreview.layerIdx}
+        layerHeightMm={slicePreview.layerHeightMm}
+        layerCount={layerCount}
+        sceneTopY={sceneTopY}
+        onLayerIdxChange={(i) =>
+          setSlicePreview((s) => ({ ...s, layerIdx: i }))
+        }
+        onLayerHeightChange={(mm) =>
+          setSlicePreview((s) => ({ ...s, layerHeightMm: mm }))
+        }
+        onExportMasksZip={() => void handleExportMasksZip()}
+        onExportCtb={() => void handleExportCtb()}
+        batchBusy={batchExport.busy}
+        batchDone={batchExport.done}
+        batchTotal={batchExport.total}
+        modelCount={files.length}
+      />
     </div>
   );
 };

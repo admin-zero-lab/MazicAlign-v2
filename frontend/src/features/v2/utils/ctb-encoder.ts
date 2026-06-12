@@ -37,7 +37,8 @@ export interface CtbExportOptions {
   onProgress?: (done: number, total: number) => void;
 }
 
-const MAGIC_V4 = 0x12fd0086;
+const MAGIC_CTB = 0x12fd0086;
+const VERSION = 3; // ChiTuBox 1.9.5 호환을 위해 v3 (binary, anti_alias=1)
 
 export async function makeCtbV4(
   sceneHandle: BabylonSceneHandle,
@@ -72,10 +73,11 @@ export async function makeCtbV4(
 
   // ---------- 3) 헤더·블록 사이즈 산정 (offset 계산용) ----------
   const HEADER_SIZE = 0x70; // 112 bytes
-  const PREVIEW_HEADER = 16; // resX + resY + offset + length
+  // Preview header: ResX + ResY + ImageOffset + ImageLength + 4 padding uints.
+  const PREVIEW_HEADER = 32;
 
   const printParamsSize = 60;
-  const slicerInfoSize = 60;
+  const slicerInfoSize = 68; // v3 slicer info 표준 크기.
 
   let off = HEADER_SIZE;
 
@@ -112,8 +114,8 @@ export async function makeCtbV4(
 
   // ---------- 5) 헤더 (112 bytes) ----------
   let p = 0;
-  view.setUint32(p, MAGIC_V4, true); p += 4;
-  view.setUint32(p, 4, true); p += 4; // version
+  view.setUint32(p, MAGIC_CTB, true); p += 4;
+  view.setUint32(p, VERSION, true); p += 4;
   view.setFloat32(p, opts.bedSizeXMm, true); p += 4;
   view.setFloat32(p, opts.bedSizeYMm, true); p += 4;
   view.setFloat32(p, opts.bedSizeZMm, true); p += 4;
@@ -143,12 +145,16 @@ export async function makeCtbV4(
   view.setUint32(p, slicerInfoOffset, true); p += 4;
   view.setUint32(p, slicerInfoSize, true); p += 4;
 
-  // ---------- 6) preview small ----------
+  // ---------- 6) preview small (header 32B + image) ----------
   p = previewSmallOffset;
   view.setUint32(p, 400, true); p += 4; // res x
   view.setUint32(p, 300, true); p += 4; // res y
   view.setUint32(p, previewSmallOffset + PREVIEW_HEADER, true); p += 4;
   view.setUint32(p, previewSmall.byteLength, true); p += 4;
+  view.setUint32(p, 0, true); p += 4; // padding
+  view.setUint32(p, 0, true); p += 4;
+  view.setUint32(p, 0, true); p += 4;
+  view.setUint32(p, 0, true); p += 4;
   u8.set(previewSmall, p);
 
   // ---------- 7) preview large ----------
@@ -157,6 +163,10 @@ export async function makeCtbV4(
   view.setUint32(p, 480, true); p += 4;
   view.setUint32(p, previewLargeOffset + PREVIEW_HEADER, true); p += 4;
   view.setUint32(p, previewLarge.byteLength, true); p += 4;
+  view.setUint32(p, 0, true); p += 4; // padding
+  view.setUint32(p, 0, true); p += 4;
+  view.setUint32(p, 0, true); p += 4;
+  view.setUint32(p, 0, true); p += 4;
   u8.set(previewLarge, p);
 
   // ---------- 8) print parameters (60 bytes) ----------
@@ -175,10 +185,25 @@ export async function makeCtbV4(
   // pad to 60
   for (; p < printParamsOffset + printParamsSize; p++) u8[p] = 0;
 
-  // ---------- 9) slicer info (60 bytes) ----------
+  // ---------- 9) slicer info (68 bytes for v3) ----------
   p = slicerInfoOffset;
-  // 단순 zero block — 기본값 OK. (실제 도구는 무시하거나 default 처리)
-  for (; p < slicerInfoOffset + slicerInfoSize; p++) u8[p] = 0;
+  view.setFloat32(p, 5.0, true); p += 4;   // BottomLiftHeight
+  view.setFloat32(p, 60.0, true); p += 4;  // BottomLiftSpeed
+  view.setFloat32(p, 5.0, true); p += 4;   // LiftHeight
+  view.setFloat32(p, 60.0, true); p += 4;  // LiftSpeed
+  view.setFloat32(p, 150.0, true); p += 4; // RetractSpeed
+  view.setFloat32(p, 0.0, true); p += 4;   // Volume
+  view.setUint32(p, 1, true); p += 4;      // AntiAliasFlag (1 = on)
+  view.setUint16(p, 0, true); p += 2;      // Padding
+  view.setUint16(p, 0, true); p += 2;      // PerLayerSettings
+  view.setUint32(p, Math.floor(Date.now() / 60000), true); p += 4; // TimestampMinutes
+  view.setUint32(p, 1, true); p += 4;      // AntiAliasLevel
+  view.setUint32(p, 0x01060300, true); p += 4; // SoftwareVersion (resinforge v1.6.3)
+  view.setFloat32(p, 0.0, true); p += 4;   // RestTimeAfterRetract
+  view.setFloat32(p, 0.0, true); p += 4;   // RestTimeAfterLift
+  view.setUint32(p, 0, true); p += 4;      // TransitionLayerCount
+  view.setUint32(p, 0, true); p += 4;      // Padding2
+  view.setUint32(p, 0, true); p += 4;      // Padding3
 
   // ---------- 10) layer table + layer data ----------
   p = layerTableOffset;
