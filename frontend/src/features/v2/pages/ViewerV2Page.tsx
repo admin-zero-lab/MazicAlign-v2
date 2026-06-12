@@ -64,8 +64,18 @@ const ViewerV2Page: React.FC = () => {
   const [autoBusy, setAutoBusy] = useState(false);
   const [slicePreview, setSlicePreview] = useState<{
     on: boolean;
-    y: number;
-  }>({ on: false, y: 30 });
+    layerIdx: number;
+    layerHeightMm: number;
+  }>({ on: false, layerIdx: 0, layerHeightMm: 0.05 });
+  const [sceneTopY, setSceneTopY] = useState(0);
+
+  // sliceY = (layerIdx + 0.5) × layerHeight — 레이어 중심을 픽업
+  const sliceYNow =
+    (slicePreview.layerIdx + 0.5) * slicePreview.layerHeightMm;
+  const layerCount = Math.max(
+    1,
+    Math.ceil(sceneTopY / slicePreview.layerHeightMm),
+  );
   const sceneHandleRef = useRef<BabylonSceneHandle>(null);
 
   const overhangAngleDeg = useSupportParamsStore(
@@ -344,7 +354,15 @@ const ViewerV2Page: React.FC = () => {
 
           <div className="flex items-center space-x-2">
             <button
-              onClick={() => setSlicePreview((s) => ({ ...s, on: !s.on }))}
+              onClick={() => {
+                setSlicePreview((s) => {
+                  if (!s.on) {
+                    const top = sceneHandleRef.current?.getSceneTopY() ?? 0;
+                    setSceneTopY(top);
+                  }
+                  return { ...s, on: !s.on };
+                });
+              }}
               className={`px-3 py-1 text-sm border rounded transition-colors ${
                 slicePreview.on
                   ? "bg-primary-600 text-white border-primary-600"
@@ -395,7 +413,7 @@ const ViewerV2Page: React.FC = () => {
             onAddSupportAt={handleAddSupportAt}
             onPickSupport={setSelectedSupportId}
             selectedSupportId={selectedSupportId}
-            sliceY={slicePreview.on ? slicePreview.y : null}
+            sliceY={slicePreview.on ? sliceYNow : null}
           />
 
           <ViewControls
@@ -437,44 +455,82 @@ const ViewerV2Page: React.FC = () => {
             <div className="absolute bottom-16 left-1/2 -translate-x-1/2 flex flex-col items-stretch gap-2 bg-white/95 backdrop-blur rounded-md shadow px-4 py-3 text-sm text-gray-700 min-w-[420px]">
               <SliceMaskPreview
                 sceneHandleRef={sceneHandleRef}
-                sliceY={slicePreview.y}
+                sliceY={sliceYNow}
                 widthPx={400}
                 heightPx={250}
                 className="mx-auto"
               />
+
               <div className="flex items-center gap-3">
-              <span className="text-xs font-semibold text-gray-600 whitespace-nowrap">
-                슬라이스 Z
-              </span>
-              <input
-                type="range"
-                min={0}
-                max={250}
-                step={0.1}
-                value={slicePreview.y}
-                onChange={(e) =>
-                  setSlicePreview((s) => ({ ...s, y: Number(e.target.value) }))
-                }
-                className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-              />
-              <input
-                type="number"
-                min={0}
-                max={250}
-                step={0.1}
-                value={slicePreview.y}
-                onChange={(e) =>
-                  setSlicePreview((s) => ({ ...s, y: Number(e.target.value) }))
-                }
-                className="w-20 px-2 py-1 text-sm border border-gray-300 rounded"
-              />
-              <span className="text-xs text-gray-500">mm</span>
-              <button
-                onClick={() => setSlicePreview({ on: false, y: 30 })}
-                className="ml-2 px-2 py-0.5 text-xs text-gray-600 hover:bg-gray-100 rounded"
-              >
-                닫기
-              </button>
+                <span className="text-xs font-semibold text-gray-600 whitespace-nowrap">
+                  레이어 두께
+                </span>
+                <input
+                  type="number"
+                  min={0.01}
+                  max={0.3}
+                  step={0.005}
+                  value={slicePreview.layerHeightMm}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    if (Number.isNaN(v) || v <= 0) return;
+                    setSlicePreview((s) => ({ ...s, layerHeightMm: v }));
+                  }}
+                  className="w-24 px-2 py-1 text-sm border border-gray-300 rounded"
+                />
+                <span className="text-xs text-gray-500">mm</span>
+                <span className="ml-auto text-xs text-gray-500">
+                  총 {layerCount} 레이어 · top {sceneTopY.toFixed(2)} mm
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-semibold text-gray-600 whitespace-nowrap">
+                  레이어
+                </span>
+                <input
+                  type="range"
+                  min={0}
+                  max={layerCount - 1}
+                  step={1}
+                  value={Math.min(slicePreview.layerIdx, layerCount - 1)}
+                  onChange={(e) =>
+                    setSlicePreview((s) => ({
+                      ...s,
+                      layerIdx: Number(e.target.value),
+                    }))
+                  }
+                  className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                />
+                <input
+                  type="number"
+                  min={0}
+                  max={layerCount - 1}
+                  step={1}
+                  value={Math.min(slicePreview.layerIdx, layerCount - 1)}
+                  onChange={(e) =>
+                    setSlicePreview((s) => ({
+                      ...s,
+                      layerIdx: Number(e.target.value),
+                    }))
+                  }
+                  className="w-20 px-2 py-1 text-sm border border-gray-300 rounded"
+                />
+                <span className="text-xs text-gray-500 font-mono">
+                  Z={sliceYNow.toFixed(3)} mm
+                </span>
+                <button
+                  onClick={() =>
+                    setSlicePreview({
+                      on: false,
+                      layerIdx: 0,
+                      layerHeightMm: 0.05,
+                    })
+                  }
+                  className="ml-2 px-2 py-0.5 text-xs text-gray-600 hover:bg-gray-100 rounded"
+                >
+                  닫기
+                </button>
               </div>
             </div>
           )}

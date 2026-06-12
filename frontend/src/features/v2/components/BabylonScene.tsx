@@ -137,6 +137,11 @@ export interface BabylonSceneHandle {
     widthPx: number,
     heightPx: number,
   ) => SliceMask;
+  /**
+   * 씬에 있는 모든 STL + 서포트의 world AABB 최대 Y. 모델 없으면 0.
+   * 슬라이서가 layer count 를 계산할 때 쓴다.
+   */
+  getSceneTopY: () => number;
 }
 
 const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
@@ -784,6 +789,20 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
             plateWidthMm: PLATE_WIDTH_MM,
             plateDepthMm: PLATE_DEPTH_MM,
           });
+        },
+        getSceneTopY() {
+          let top = 0;
+          for (const mesh of meshMapRef.current.values()) {
+            mesh.computeWorldMatrix(true);
+            const y = mesh.getBoundingInfo().boundingBox.maximumWorld.y;
+            if (y > top) top = y;
+          }
+          for (const sm of supportMeshMapRef.current.values()) {
+            sm.computeWorldMatrix(true);
+            const y = sm.getBoundingInfo().boundingBox.maximumWorld.y;
+            if (y > top) top = y;
+          }
+          return top;
         },
       }),
       [],
