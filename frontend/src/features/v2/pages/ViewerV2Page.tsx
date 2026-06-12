@@ -267,6 +267,8 @@ const ViewerV2Page: React.FC = () => {
         layerHeightMm: slicePreview.layerHeightMm,
         widthPx: printerProfile.lcdWidthPx,
         heightPx: printerProfile.lcdHeightPx,
+        plateWidthMm: printerProfile.buildVolumeMm[0],
+        plateDepthMm: printerProfile.buildVolumeMm[1],
         onProgress: (done, total) =>
           setBatchExport({ busy: true, done, total }),
       });
@@ -480,6 +482,8 @@ const ViewerV2Page: React.FC = () => {
             onGizmoCommit={handleCommitTransform}
             supports={supports}
             supportParams={supportParams}
+            plateWidthMm={printerProfile.buildVolumeMm[0]}
+            plateDepthMm={printerProfile.buildVolumeMm[1]}
             editMode={editMode}
             onAddSupportAt={handleAddSupportAt}
             onPickSupport={setSelectedSupportId}
@@ -567,7 +571,8 @@ const ViewerV2Page: React.FC = () => {
               <span>Z</span>
             </div>
             <div className="mt-1 text-gray-500">
-              플레이트 200 × 125 mm · 격자 10 mm
+              플레이트 {printerProfile.buildVolumeMm[0].toFixed(1)} ×{" "}
+              {printerProfile.buildVolumeMm[1].toFixed(1)} mm · 격자 10 mm
             </div>
           </div>
         </main>

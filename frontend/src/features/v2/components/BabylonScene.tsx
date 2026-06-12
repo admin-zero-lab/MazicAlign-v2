@@ -60,8 +60,6 @@ import {
 } from "../utils/camera-views";
 import type { STLFileV2 } from "../types/stl";
 
-const PLATE_WIDTH_MM = 200;
-const PLATE_DEPTH_MM = 125;
 const HIGHLIGHT_COLOR = new Color3(1.0, 0.78, 0.18); // 따뜻한 노랑
 
 interface BabylonSceneProps {
@@ -85,6 +83,10 @@ interface BabylonSceneProps {
   supports: SupportPointV2[];
   /** 서포트 굵기 등 시각화에 쓰는 파라미터. */
   supportParams: SupportParams;
+  /** 빌드플레이트 가로 (mm). 프로파일에서 옴. */
+  plateWidthMm: number;
+  /** 빌드플레이트 세로 (mm). */
+  plateDepthMm: number;
   /** 'select' / 'support' — 모드별 픽·드래그·Gizmo 동작. */
   editMode: EditMode;
   /** 'support' 모드에서 모델 표면 픽 시 → 그 위치에 서포트 추가. */
@@ -155,6 +157,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       onGizmoCommit,
       supports,
       supportParams,
+      plateWidthMm,
+      plateDepthMm,
       editMode,
       onAddSupportAt,
       onPickSupport,
@@ -201,6 +205,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     overhangRef.current = overhangAngleDeg;
     const liftRef = useRef<number>(supportParams.liftMm);
     liftRef.current = supportParams.liftMm;
+    const plateWRef = useRef<number>(plateWidthMm);
+    plateWRef.current = plateWidthMm;
+    const plateDRef = useRef<number>(plateDepthMm);
+    plateDRef.current = plateDepthMm;
     const editModeRef = useRef<EditMode>(editMode);
     editModeRef.current = editMode;
     const onAddSupportRef = useRef(onAddSupportAt);
@@ -344,10 +352,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       lightSideB.intensity = 0.4;
       lightSideB.specular = new Color3(0.05, 0.05, 0.05);
 
-      furnitureRef.current = addBuildPlateAndGrid(scene, {
-        widthMm: PLATE_WIDTH_MM,
-        depthMm: PLATE_DEPTH_MM,
-      });
+      // 빌드플레이트 / 그리드는 별도 plate effect 에서 생성·재생성한다.
 
       supportMaterialRef.current = createSupportMaterial(scene);
       sliceModelMatRef.current = createSliceFillMaterial(
@@ -468,7 +473,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       sceneRef.current = scene;
       cameraRef.current = camera;
 
-      resetCameraOnPlate(camera, PLATE_WIDTH_MM, PLATE_DEPTH_MM);
+      // 초기 카메라 위치는 plate effect 에서 잡는다.
 
       engine.runRenderLoop(() => scene.render());
 
@@ -514,6 +519,25 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         cameraRef.current = null;
       };
     }, []);
+
+    // 1.5) plate 크기 변경 시 furniture 재생성 + 카메라 reset.
+    useEffect(() => {
+      const scene = sceneRef.current;
+      const camera = cameraRef.current;
+      if (!scene || !camera) return;
+
+      furnitureRef.current?.dispose();
+      furnitureRef.current = addBuildPlateAndGrid(scene, {
+        widthMm: plateWidthMm,
+        depthMm: plateDepthMm,
+      });
+
+      // 모델이 없을 때만 plate 기준으로 camera reset (모델이 있으면
+      // 사용자 시점 유지).
+      if (meshMapRef.current.size === 0) {
+        resetCameraOnPlate(camera, plateWidthMm, plateDepthMm);
+      }
+    }, [plateWidthMm, plateDepthMm]);
 
     // 2) files 변경 시 메쉬 동기화
     useEffect(() => {
@@ -744,7 +768,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           if (meshes.length > 0) {
             frameCameraToMeshes(camera, meshes);
           } else {
-            resetCameraOnPlate(camera, PLATE_WIDTH_MM, PLATE_DEPTH_MM);
+            resetCameraOnPlate(camera, plateWRef.current, plateDRef.current);
           }
         },
         previewTransform(id, t) {
@@ -786,8 +810,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           return rasterizePolygons(polys, {
             widthPx,
             heightPx,
-            plateWidthMm: PLATE_WIDTH_MM,
-            plateDepthMm: PLATE_DEPTH_MM,
+            plateWidthMm: plateWRef.current,
+            plateDepthMm: plateDRef.current,
           });
         },
         getSceneTopY() {

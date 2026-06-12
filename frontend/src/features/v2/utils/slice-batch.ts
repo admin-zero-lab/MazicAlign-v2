@@ -7,6 +7,8 @@ export interface BatchSliceOptions {
   layerHeightMm: number;
   widthPx: number;
   heightPx: number;
+  plateWidthMm: number;
+  plateDepthMm: number;
   /** 0 ≤ progress ≤ 1 콜백 (선택). */
   onProgress?: (done: number, total: number) => void;
 }
@@ -36,8 +38,8 @@ export async function exportLayersAsPngZip(
     layerHeightMm: opts.layerHeightMm,
     widthPx: opts.widthPx,
     heightPx: opts.heightPx,
-    plateWidthMm: 200,
-    plateDepthMm: 125,
+    plateWidthMm: opts.plateWidthMm,
+    plateDepthMm: opts.plateDepthMm,
     topY,
     generatedAt: new Date().toISOString(),
     generator: "resinforge-v2",
