@@ -55,6 +55,6 @@ export interface SupportPointV2 {
   stlId: string;
   contact: [number, number, number];
   base: [number, number, number];
-  source: "auto" | "manual";
+  source: "auto" | "manual" | "bridge";
   addedAt: number;
 }

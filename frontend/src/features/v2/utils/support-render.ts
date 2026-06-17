@@ -2,6 +2,7 @@ import {
   Color3,
   Mesh,
   MeshBuilder,
+  Quaternion,
   Scene,
   StandardMaterial,
   Vector3,
@@ -11,21 +12,17 @@ import {
 import type { SupportParams, SupportPointV2 } from "../support/types";
 
 /**
- * 서포트 기둥의 단면 프로파일.
+ * 서포트 기둥. base → contact 방향으로 그려진다.
  *
- *   base (Y=0)            ─┐  diameter = baseDiameter
- *     │  baseTransition    │      (전이 구간: 굵기 변화)
- *   trunk                  ─┤  diameter = trunkDiameter
- *     │  (중앙)            │
- *   tip end                ─┤  diameter = trunkDiameter
- *     │  tipTransition     │      (전이 구간)
- *   contact                ─┘  diameter = tipDiameter
+ * Profile (Y 축 기본, Lathe):
+ *   · source='auto'|'manual': baseDiameter (큰 바닥, 플레이트 접점)
+ *     → trunk → tip (모델 접점, 가는 끝)
+ *   · source='bridge'        : 양 끝 모두 tipDiameter (대칭).
+ *     모델 두 지점을 잇는 cross-brace 용.
  *
- * Lathe(회전체) 로 만든다 — 한 mesh 로 매끄러운 윤곽.
- *
- * 자동 생성 결과는 base.xz == contact.xz 라 수직 (회전 불필요).
- * 수동 추가에서도 우리는 base 를 (contact.x, 0, contact.z) 로 두므로
- * 항상 수직.
+ * 회전: Y-up 의 lathe 를 (contact - base) 방향으로 회전시켜 두
+ * 점을 잇게 한다. (base.xz == contact.xz 인 수직 케이스는 자동으로
+ * identity 회전이 되어 기존 동작과 같다.)
  */
 export function createSupportMesh(
   scene: Scene,
@@ -40,28 +37,30 @@ export function createSupportMesh(
     point.contact[2],
   );
 
-  const height = Math.max(contact.y - base.y, 0.01);
+  const direction = contact.subtract(base);
+  const length = Math.max(direction.length(), 0.01);
 
-  // 전이 길이가 전체 높이보다 커지지 않도록 안전하게 축소.
   let baseT = params.baseTransitionMm;
   let tipT = params.tipTransitionMm;
   const totalT = baseT + tipT;
-  if (totalT >= height) {
-    const scale = (height / totalT) * 0.95;
+  if (totalT >= length) {
+    const scale = (length / totalT) * 0.95;
     baseT *= scale;
     tipT *= scale;
   }
 
   const trunkR = params.trunkDiameterMm * 0.5;
-  const baseR = Math.max(params.baseDiameterMm * 0.5, trunkR);
   const tipR = Math.min(params.tipDiameterMm * 0.5, trunkR);
+  const baseR = Math.max(params.baseDiameterMm * 0.5, trunkR);
 
-  // Lathe profile points (X = radius, Y = height along axis).
+  // 시작 반지름: 브릿지는 양 끝 모두 tip 반지름 (양쪽 다 모델 자국 작음).
+  const startR = point.source === "bridge" ? tipR : baseR;
+
   const profile: Vector3[] = [
-    new Vector3(baseR, 0, 0),
+    new Vector3(startR, 0, 0),
     new Vector3(trunkR, baseT, 0),
-    new Vector3(trunkR, height - tipT, 0),
-    new Vector3(tipR, height, 0),
+    new Vector3(trunkR, length - tipT, 0),
+    new Vector3(tipR, length, 0),
   ];
 
   const m = MeshBuilder.CreateLathe(
@@ -71,17 +70,32 @@ export function createSupportMesh(
       tessellation: 12,
       closed: true,
       cap: Mesh.CAP_ALL,
-      // sideOrientation must be set so the inside is not flipped.
       sideOrientation: Mesh.DEFAULTSIDE,
-      // frontUVs / backUVs are required by the type for cap modes.
       frontUVs: new Vector4(0, 0, 1, 1),
     },
     scene,
   );
 
   m.position.copyFrom(base);
+
+  // up (lathe 의 +Y) 를 direction 으로 정렬. 수직 케이스는 identity.
+  const dirNorm = direction.normalizeToNew();
+  const up = new Vector3(0, 1, 0);
+  const dot = Vector3.Dot(up, dirNorm);
+  if (dot > 0.9999) {
+    m.rotationQuaternion = Quaternion.Identity();
+  } else if (dot < -0.9999) {
+    // 완전 반대 방향 — X 축 180°.
+    m.rotationQuaternion = Quaternion.RotationAxis(new Vector3(1, 0, 0), Math.PI);
+  } else {
+    const axis = Vector3.Cross(up, dirNorm);
+    axis.normalize();
+    const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+    m.rotationQuaternion = Quaternion.RotationAxis(axis, angle);
+  }
+
   m.material = material;
-  m.isPickable = false; // 'support' 모드일 때만 BabylonScene 이 토글
+  m.isPickable = false;
   m.metadata = { type: "support", supportId: point.id };
   return m;
 }
