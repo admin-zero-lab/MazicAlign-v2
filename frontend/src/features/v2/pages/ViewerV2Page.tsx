@@ -355,6 +355,33 @@ const ViewerV2Page: React.FC = () => {
     [supports, patchSupport],
   );
 
+  const handleMoveBridgeControlPoint = useCallback(
+    async (
+      supportId: string,
+      idx: 0 | 1 | 2,
+      pos: [number, number, number],
+    ) => {
+      const target = supports.find((s) => s.id === supportId);
+      if (!target || !target.curveControlPoints) return;
+      const oldCps = target.curveControlPoints;
+      const newCps: typeof oldCps = [oldCps[0], oldCps[1], oldCps[2]];
+      newCps[idx] = pos;
+
+      await patchSupport(supportId, { curveControlPoints: newCps });
+
+      useUndoStore.getState().push({
+        label: "move-bridge-cp",
+        undo: async () => {
+          await patchSupport(supportId, { curveControlPoints: oldCps });
+        },
+        redo: async () => {
+          await patchSupport(supportId, { curveControlPoints: newCps });
+        },
+      });
+    },
+    [supports, patchSupport],
+  );
+
   const handleDeleteSelectedSupport = useCallback(() => {
     if (editMode !== "support" || !selectedSupportId) return;
     void handleRemoveSupport(selectedSupportId);
@@ -598,6 +625,7 @@ const ViewerV2Page: React.FC = () => {
             pendingBridgePoint={pendingBridge?.contact ?? null}
             bridgeMode={bridgeMode}
             sliceY={slicePreview.on ? sliceYNow : null}
+            onMoveBridgeControlPoint={handleMoveBridgeControlPoint}
           />
 
           <ViewControls

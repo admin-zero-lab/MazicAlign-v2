@@ -126,6 +126,16 @@ interface BabylonSceneProps {
    * 활성 시 Y > sliceY 영역의 메쉬가 잘려 단면이 보인다.
    */
   sliceY: number | null;
+  /**
+   * Bridge 곡선의 변곡점을 사용자가 드래그해서 옮겼을 때 호출.
+   * idx 는 [0, 1, 2] — base → contact 방향으로 첫 번째 / 가운데 / 세 번째
+   * 변곡점. 새 좌표는 world 기준 [x, y, z].
+   */
+  onMoveBridgeControlPoint: (
+    supportId: string,
+    idx: 0 | 1 | 2,
+    pos: [number, number, number],
+  ) => void;
   className?: string;
 }
 
@@ -191,6 +201,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       pendingBridgePoint,
       bridgeMode,
       sliceY,
+      onMoveBridgeControlPoint,
       className = "",
     },
     ref,
@@ -213,6 +224,9 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     const sliceFillMeshesRef = useRef<Mesh[]>([]);
     const bridgeMarkerRef = useRef<Mesh | null>(null);
     const bridgeMarkerMatRef = useRef<StandardMaterial | null>(null);
+    // Bridge 변곡점 sphere (선택된 bridge 일 때만 0..3 개).
+    const bridgeCpMeshesRef = useRef<Mesh[]>([]);
+    const bridgeCpMatRef = useRef<StandardMaterial | null>(null);
     const sliceModelMatRef = useRef<ReturnType<
       typeof createSliceFillMaterial
     > | null>(null);
@@ -250,6 +264,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     onPickSupportRef.current = onPickSupport;
     const onMoveSupportRef = useRef(onMoveSupport);
     onMoveSupportRef.current = onMoveSupport;
+    const onMoveBridgeCpRef = useRef(onMoveBridgeControlPoint);
+    onMoveBridgeCpRef.current = onMoveBridgeControlPoint;
     const selectedSupportRef = useRef<string | null>(selectedSupportId);
     selectedSupportRef.current = selectedSupportId;
     const bridgeModeRef = useRef<boolean>(bridgeMode);
@@ -409,6 +425,13 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       bridgeMat.emissiveColor = new Color3(0.6, 0.3, 0.1);
       bridgeMat.specularColor = new Color3(0, 0, 0);
       bridgeMarkerMatRef.current = bridgeMat;
+
+      // Bridge 변곡점 핸들 (노란 sphere) 용 material.
+      const cpMat = new StandardMaterial("v2_bridge_cp_mat", scene);
+      cpMat.diffuseColor = new Color3(1.0, 0.85, 0.1);
+      cpMat.emissiveColor = new Color3(0.5, 0.42, 0.05);
+      cpMat.specularColor = new Color3(0, 0, 0);
+      bridgeCpMatRef.current = cpMat;
 
       sliceModelMatRef.current = createSliceFillMaterial(
         scene,
@@ -862,6 +885,56 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       m.isPickable = false;
       bridgeMarkerRef.current = m;
     }, [pendingBridgePoint]);
+
+    // 5.7) 선택된 Bridge 의 변곡점 3 개를 노란 sphere 로 띄우고
+    //       PointerDragBehavior 로 자유 드래그. drag end 에 콜백 호출.
+    useEffect(() => {
+      const scene = sceneRef.current;
+      const mat = bridgeCpMatRef.current;
+      if (!scene || !mat) return;
+
+      // 매번 dispose & 재생성. drag 도중에는 supports 가 안 바뀌므로
+      // 끊김 없이 동작.
+      for (const m of bridgeCpMeshesRef.current) {
+        m.dispose();
+      }
+      bridgeCpMeshesRef.current = [];
+
+      if (editMode !== "support" || !selectedSupportId) return;
+      const sup = supports.find((s) => s.id === selectedSupportId);
+      if (!sup || sup.source !== "bridge" || !sup.curveControlPoints) return;
+
+      const diameter = Math.max(supportParams.bridgeDiameterMm * 1.5, 1.2);
+      for (let i = 0; i < 3; i++) {
+        const cp = sup.curveControlPoints[i];
+        const sphere = MeshBuilder.CreateSphere(
+          `v2_bridge_cp_${sup.id}_${i}`,
+          { diameter, segments: 10 },
+          scene,
+        );
+        sphere.position.set(cp[0], cp[1], cp[2]);
+        sphere.material = mat;
+        sphere.isPickable = true;
+        // 카메라 마주보는 평면에서 자유 드래그. 좌클릭+드래그.
+        const drag = new PointerDragBehavior();
+        drag.useObjectOrientationForDragging = false;
+        sphere.addBehavior(drag);
+        const idx = i as 0 | 1 | 2;
+        drag.onDragEndObservable.add(() => {
+          onMoveBridgeCpRef.current(sup.id, idx, [
+            sphere.position.x,
+            sphere.position.y,
+            sphere.position.z,
+          ]);
+        });
+        bridgeCpMeshesRef.current.push(sphere);
+      }
+    }, [
+      editMode,
+      selectedSupportId,
+      supports,
+      supportParams.bridgeDiameterMm,
+    ]);
 
     // 6) editMode 변경 시:
     //    · STL 메쉬의 PointerDragBehavior detach/attach
