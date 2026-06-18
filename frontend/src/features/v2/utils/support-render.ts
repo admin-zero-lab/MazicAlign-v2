@@ -54,8 +54,10 @@ export function createSupportMesh(
   // Bridge 는 trunk 굵기를 bridgeDiameterMm 로 별도 사용.
   const trunkR =
     (isBridge ? params.bridgeDiameterMm : params.trunkDiameterMm) * 0.5;
-  const tipR = Math.min(params.tipDiameterMm * 0.5, trunkR);
-  const baseR = Math.max(params.baseDiameterMm * 0.5, trunkR);
+  // 사용자 입력값 그대로 (clamp 없음): 팁이 trunk 보다 굵거나 base 가
+  // 더 가는 형상도 슬라이더로 자유롭게 재현 가능.
+  const tipR = params.tipDiameterMm * 0.5;
+  const baseR = params.baseDiameterMm * 0.5;
 
   // 시작 반지름: 브릿지는 양 끝 모두 tip 반지름 (양쪽 다 모델 자국 작음).
   const startR = isBridge ? tipR : baseR;
