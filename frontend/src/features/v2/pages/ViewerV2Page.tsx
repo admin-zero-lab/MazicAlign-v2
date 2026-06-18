@@ -241,6 +241,12 @@ const ViewerV2Page: React.FC = () => {
           // 거의 같은 점이면 무시.
           return;
         }
+        // 변곡점 3 개 자동 배치: t = 0.25 / 0.50 / 0.75. 직선 상태.
+        const lerp = (t: number): [number, number, number] => [
+          a[0] + (b[0] - a[0]) * t,
+          a[1] + (b[1] - a[1]) * t,
+          a[2] + (b[2] - a[2]) * t,
+        ];
         const newPoint: SupportPointV2 = {
           id: crypto.randomUUID(),
           projectId,
@@ -252,6 +258,7 @@ const ViewerV2Page: React.FC = () => {
           base: a,
           source: "bridge",
           addedAt: Date.now(),
+          curveControlPoints: [lerp(0.25), lerp(0.5), lerp(0.75)],
         };
         setPendingBridge(null);
         await addSupports([newPoint]);

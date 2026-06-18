@@ -1,5 +1,6 @@
 import {
   Color3,
+  Curve3,
   Mesh,
   MeshBuilder,
   Quaternion,
@@ -20,6 +21,10 @@ import type { SupportParams, SupportPointV2 } from "../support/types";
  *   · source='bridge'        : 양 끝 모두 tipDiameter (대칭).
  *     모델 두 지점을 잇는 cross-brace 용.
  *
+ * Bridge 곡선:
+ *   · curveControlPoints (변곡점 3 개) 가 있으면 Lathe 대신
+ *     [base, Y1, Y2, Y3, contact] 5 점을 통과하는 Catmull-Rom Tube.
+ *
  * 회전: Y-up 의 lathe 를 (contact - base) 방향으로 회전시켜 두
  * 점을 잇게 한다. (base.xz == contact.xz 인 수직 케이스는 자동으로
  * identity 회전이 되어 기존 동작과 같다.)
@@ -30,6 +35,13 @@ export function createSupportMesh(
   params: SupportParams,
   material: StandardMaterial,
 ): Mesh {
+  const isBridge = point.source === "bridge";
+
+  // Bridge + 변곡점 → 곡선 Tube.
+  if (isBridge && point.curveControlPoints) {
+    return createBridgeCurveTube(scene, point, params, material);
+  }
+
   const base = new Vector3(point.base[0], point.base[1], point.base[2]);
   const contact = new Vector3(
     point.contact[0],
@@ -48,8 +60,6 @@ export function createSupportMesh(
     baseT *= scale;
     tipT *= scale;
   }
-
-  const isBridge = point.source === "bridge";
 
   // Bridge 는 trunk 굵기를 bridgeDiameterMm 로 별도 사용.
   const trunkR =
@@ -99,6 +109,56 @@ export function createSupportMesh(
     const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
     m.rotationQuaternion = Quaternion.RotationAxis(axis, angle);
   }
+
+  m.material = material;
+  m.isPickable = false;
+  m.metadata = {
+    type: "support",
+    supportId: point.id,
+    stlId: point.stlId,
+    baseStlId: point.baseStlId,
+  };
+  return m;
+}
+
+/**
+ * Bridge 곡선: 5 점 (base, Y1, Y2, Y3, contact) 을 통과하는
+ * Catmull-Rom spline 을 만들어 그 path 를 따라 Tube 렌더.
+ *
+ * 굵기는 균일하게 bridgeDiameterMm. (양 끝 가는 형태는 다음 단계에서
+ * radiusFunction 으로 추가 예정.)
+ */
+function createBridgeCurveTube(
+  scene: Scene,
+  point: SupportPointV2,
+  params: SupportParams,
+  material: StandardMaterial,
+): Mesh {
+  const cps = point.curveControlPoints!;
+  const passPoints = [
+    new Vector3(point.base[0], point.base[1], point.base[2]),
+    new Vector3(cps[0][0], cps[0][1], cps[0][2]),
+    new Vector3(cps[1][0], cps[1][1], cps[1][2]),
+    new Vector3(cps[2][0], cps[2][1], cps[2][2]),
+    new Vector3(point.contact[0], point.contact[1], point.contact[2]),
+  ];
+
+  // 각 segment 사이 보간 점 수. 곡률에 따라 24 ~ 32 가 무난.
+  const path = Curve3.CreateCatmullRomSpline(passPoints, 24, false).getPoints();
+
+  const radius = params.bridgeDiameterMm * 0.5;
+
+  const m = MeshBuilder.CreateTube(
+    `support_${point.id}`,
+    {
+      path,
+      radius,
+      tessellation: 12,
+      cap: Mesh.CAP_ALL,
+      sideOrientation: Mesh.DEFAULTSIDE,
+    },
+    scene,
+  );
 
   m.material = material;
   m.isPickable = false;

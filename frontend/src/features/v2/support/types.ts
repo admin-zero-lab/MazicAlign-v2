@@ -68,4 +68,21 @@ export interface SupportPointV2 {
   base: [number, number, number];
   source: "auto" | "manual" | "bridge";
   addedAt: number;
+  /**
+   * Bridge 곡선용 변곡점 3 개 (옵셔널).
+   *
+   * base 와 contact 사이의 t = 0.25 / 0.50 / 0.75 위치에 자동
+   * 배치된 뒤, 사용자가 드래그해 곡선 형태를 만든다. 정의되어 있지
+   * 않거나 모두 lerp 위치에 있으면 결과는 직선과 동일.
+   *
+   * 렌더 시 [base, ...curveControlPoints, contact] 5 점을 통과하는
+   * Catmull-Rom spline 의 Tube 가 만들어진다.
+   *
+   * source !== 'bridge' 인 점에서는 무시된다.
+   */
+  curveControlPoints?: [
+    [number, number, number],
+    [number, number, number],
+    [number, number, number],
+  ];
 }
