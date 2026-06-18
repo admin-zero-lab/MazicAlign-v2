@@ -113,19 +113,42 @@ export async function deleteSupportsByProject(projectId: string): Promise<void> 
   });
 }
 
-/** 단일 STL 의 서포트만 삭제 (예: 모델 삭제 cascade). */
+/**
+ * 단일 STL 의 서포트를 모두 삭제 (모델 삭제 cascade).
+ * Bridge 의 경우 contact 쪽 (stlId) 또는 base 쪽 (baseStlId) 어느
+ * 한쪽이 일치하면 같이 삭제 — 한 끝이 사라진 기둥이 공중에 떠있지
+ * 않게 한다.
+ */
 export async function deleteSupportsByStl(stlId: string): Promise<void> {
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_SUPPORTS, "readwrite");
-    const idx = tx.objectStore(STORE_SUPPORTS).index("by_stl");
-    idx.openCursor(IDBKeyRange.only(stlId)).onsuccess = (e) => {
+    const store = tx.objectStore(STORE_SUPPORTS);
+    const idxStl = store.index("by_stl");
+    const idxBase = store.index("by_base_stl");
+
+    // 두 인덱스 양쪽에서 매치되는 모든 record id 를 수집한 뒤 한 번에 delete.
+    const ids = new Set<string>();
+
+    idxStl.openCursor(IDBKeyRange.only(stlId)).onsuccess = (e) => {
       const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
       if (cursor) {
-        cursor.delete();
+        ids.add((cursor.value as { id: string }).id);
         cursor.continue();
+      } else {
+        // by_stl 끝나면 by_base_stl 스캔.
+        idxBase.openCursor(IDBKeyRange.only(stlId)).onsuccess = (e2) => {
+          const c2 = (e2.target as IDBRequest<IDBCursorWithValue | null>).result;
+          if (c2) {
+            ids.add((c2.value as { id: string }).id);
+            c2.continue();
+          } else {
+            for (const id of ids) store.delete(id);
+          }
+        };
       }
     };
+
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });

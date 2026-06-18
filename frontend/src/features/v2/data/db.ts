@@ -7,7 +7,7 @@
  */
 
 export const DB_NAME = "resinforge";
-export const DB_VERSION = 3;
+export const DB_VERSION = 4;
 
 export const STORE_PROJECTS = "projects";
 export const STORE_STL_FILES = "stl_files";
@@ -53,6 +53,18 @@ export function openDb(): Promise<IDBDatabase> {
         });
         supportStore.createIndex("by_project", "projectId");
         supportStore.createIndex("by_stl", "stlId");
+      }
+
+      // v3 → v4: bridge cascade 용 by_base_stl 인덱스.
+      // 기존 store 에 인덱스 추가는 upgrade transaction 으로.
+      if (oldVersion < 4) {
+        const tx = req.transaction;
+        if (tx) {
+          const supportStore = tx.objectStore(STORE_SUPPORTS);
+          if (!supportStore.indexNames.contains("by_base_stl")) {
+            supportStore.createIndex("by_base_stl", "baseStlId");
+          }
+        }
       }
     };
 

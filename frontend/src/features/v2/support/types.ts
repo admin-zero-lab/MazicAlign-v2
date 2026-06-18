@@ -51,8 +51,14 @@ export type SupportParamKey = keyof SupportParams;
 export interface SupportPointV2 {
   id: string;
   projectId: string;
-  /** 어느 STL 의 오버행 위에 붙어있는지. */
+  /** contact 쪽이 닿아있는 STL. 자동/단점/브릿지 모두 필수. */
   stlId: string;
+  /**
+   * 브릿지의 경우 base 쪽이 닿아있는 STL (contact 와 다를 수 있음).
+   * 자동/단점은 base 가 빌드플레이트라 undefined.
+   * 둘 중 어느 STL 이 삭제돼도 cascade 로 같이 사라진다.
+   */
+  baseStlId?: string;
   contact: [number, number, number];
   base: [number, number, number];
   source: "auto" | "manual" | "bridge";

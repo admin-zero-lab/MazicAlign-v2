@@ -244,7 +244,8 @@ const ViewerV2Page: React.FC = () => {
         const newPoint: SupportPointV2 = {
           id: crypto.randomUUID(),
           projectId,
-          stlId, // 두 번째 클릭의 모델
+          stlId, // 두 번째 클릭의 모델 (contact 쪽)
+          baseStlId: pendingBridge.stlId, // 첫 번째 클릭의 모델 (base 쪽)
           // base = 첫 점, contact = 두 번째 점.
           // (createSupportMesh 는 base→contact 방향으로 그린다.)
           contact: b,
