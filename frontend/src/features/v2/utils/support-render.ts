@@ -49,12 +49,16 @@ export function createSupportMesh(
     tipT *= scale;
   }
 
-  const trunkR = params.trunkDiameterMm * 0.5;
+  const isBridge = point.source === "bridge";
+
+  // Bridge 는 trunk 굵기를 bridgeDiameterMm 로 별도 사용.
+  const trunkR =
+    (isBridge ? params.bridgeDiameterMm : params.trunkDiameterMm) * 0.5;
   const tipR = Math.min(params.tipDiameterMm * 0.5, trunkR);
   const baseR = Math.max(params.baseDiameterMm * 0.5, trunkR);
 
   // 시작 반지름: 브릿지는 양 끝 모두 tip 반지름 (양쪽 다 모델 자국 작음).
-  const startR = point.source === "bridge" ? tipR : baseR;
+  const startR = isBridge ? tipR : baseR;
 
   const profile: Vector3[] = [
     new Vector3(startR, 0, 0),

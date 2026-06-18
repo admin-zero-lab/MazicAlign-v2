@@ -38,6 +38,11 @@ export interface SupportParams {
    *  서포트 기둥이 의미 있는 길이로 생기려면 필요. STL 로드 시
    *  적용되며 변경 후엔 다시 불러올 때부터 반영. */
   liftMm: number;
+
+  /** Bridge 서포트(두 지점 잇는 cross-brace)의 본체 굵기. mm.
+   *  원형 단면. 일반 서포트의 trunk 와 분리해 두꺼운 보강용으로
+   *  쓰기 좋다. */
+  bridgeDiameterMm: number;
 }
 
 export type SupportParamKey = keyof SupportParams;

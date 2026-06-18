@@ -14,6 +14,7 @@ export const DEFAULT_SUPPORT_PARAMS: SupportParams = {
   autoSizeTrunk: false,
   contactSpacingMm: 4.0,
   liftMm: 5.0,
+  bridgeDiameterMm: 1.2,
 };
 
 /**
@@ -31,4 +32,5 @@ export const SUPPORT_PARAM_LIMITS: Record<
   baseTransitionMm: { min: 0.5, max: 10.0, step: 0.1, unit: "mm", label: "바닥 전이 길이" },
   contactSpacingMm: { min: 1.5, max: 15.0, step: 0.5, unit: "mm", label: "접점 간격" },
   liftMm: { min: 0, max: 30, step: 0.5, unit: "mm", label: "모델 리프트" },
+  bridgeDiameterMm: { min: 0.5, max: 4.0, step: 0.1, unit: "mm", label: "Bridge 굵기" },
 };
