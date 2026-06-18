@@ -115,6 +115,13 @@ interface BabylonSceneProps {
    */
   pendingBridgePoint: [number, number, number] | null;
   /**
+   * Bridge sub-mode 활성 여부. true 면:
+   *   · 기둥 픽 → 그 기둥 위 hit point 를 onAddSupportAt 으로 넘김
+   *     (= bridge endpoint 로 사용). stlId 는 기둥의 stlId.
+   *   · 빈 공간 픽 → 무시 (취소는 Esc).
+   */
+  bridgeMode: boolean;
+  /**
    * Z 슬라이스 미리보기 높이 (mm). null 이면 비활성.
    * 활성 시 Y > sliceY 영역의 메쉬가 잘려 단면이 보인다.
    */
@@ -182,6 +189,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       selectedSupportId,
       onMoveSupport,
       pendingBridgePoint,
+      bridgeMode,
       sliceY,
       className = "",
     },
@@ -244,6 +252,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     onMoveSupportRef.current = onMoveSupport;
     const selectedSupportRef = useRef<string | null>(selectedSupportId);
     selectedSupportRef.current = selectedSupportId;
+    const bridgeModeRef = useRef<boolean>(bridgeMode);
+    bridgeModeRef.current = bridgeMode;
     const selectedRef = useRef<ReadonlySet<string>>(selectedIds);
     selectedRef.current = selectedIds;
     const onPickRef = useRef(onPick);
@@ -500,16 +510,35 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
 
         const picked = info.pickInfo?.pickedMesh;
 
-        // 'support' 모드: 모델 표면 픽 → 추가, 기둥 픽 → 선택,
-        // 빈 공간 픽 → 선택 해제 (삭제는 Delete 키 / UI 버튼).
+        // 'support' 모드:
+        //   · Bridge sub-mode 면 기둥 픽도 endpoint 로 → onAddSupportAt.
+        //   · 그 외 기둥 픽 → 선택. 모델 표면 픽 → 추가.
+        //   · 빈 공간 픽 → 선택 해제 (bridge 모드는 무시, Esc 로 취소).
         if (editModeRef.current === "support") {
+          const bridge = bridgeModeRef.current;
+
           if (!picked) {
-            onPickSupportRef.current(null);
+            if (!bridge) onPickSupportRef.current(null);
             return;
           }
-          const meta = (picked as { metadata?: { type?: string; supportId?: string } })
-            .metadata;
+          const meta = (
+            picked as {
+              metadata?: {
+                type?: string;
+                supportId?: string;
+                stlId?: string;
+              };
+            }
+          ).metadata;
+
           if (meta?.type === "support" && meta.supportId) {
+            // Bridge 모드 → 기둥 위 hit point 를 새 endpoint 로.
+            if (bridge && info.pickInfo?.pickedPoint && meta.stlId) {
+              const p = info.pickInfo.pickedPoint;
+              onAddSupportRef.current(meta.stlId, [p.x, p.y, p.z]);
+              return;
+            }
+            // 그 외 → 선택.
             onPickSupportRef.current(meta.supportId);
             return;
           }
@@ -517,7 +546,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
             if (mesh === picked && info.pickInfo?.pickedPoint) {
               const p = info.pickInfo.pickedPoint;
               onAddSupportRef.current(id, [p.x, p.y, p.z]);
-              onPickSupportRef.current(null);
+              if (!bridge) onPickSupportRef.current(null);
               return;
             }
           }

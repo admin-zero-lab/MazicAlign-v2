@@ -589,6 +589,7 @@ const ViewerV2Page: React.FC = () => {
             selectedSupportId={selectedSupportId}
             onMoveSupport={handleMoveSupport}
             pendingBridgePoint={pendingBridge?.contact ?? null}
+            bridgeMode={bridgeMode}
             sliceY={slicePreview.on ? sliceYNow : null}
           />
 

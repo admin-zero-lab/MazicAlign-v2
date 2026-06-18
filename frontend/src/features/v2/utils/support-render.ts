@@ -100,7 +100,12 @@ export function createSupportMesh(
 
   m.material = material;
   m.isPickable = false;
-  m.metadata = { type: "support", supportId: point.id };
+  m.metadata = {
+    type: "support",
+    supportId: point.id,
+    stlId: point.stlId,
+    baseStlId: point.baseStlId,
+  };
   return m;
 }
 
