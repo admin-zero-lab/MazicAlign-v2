@@ -503,7 +503,7 @@ const ViewerV2Page: React.FC = () => {
     : null;
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="h-screen bg-gray-50 flex flex-col overflow-hidden">
       <header className="bg-white border-b">
         <div className="px-6 py-3 flex items-center justify-between">
           <div className="flex items-center space-x-4">

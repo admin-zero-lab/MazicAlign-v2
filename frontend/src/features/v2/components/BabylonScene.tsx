@@ -360,7 +360,9 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         scene,
       );
       camera.attachControl(canvas, true);
-      camera.wheelPrecision = 30;
+      // wheelPrecision 은 휠 입력에 대한 "나눗셈" 계수 → 값이 작을수록
+      // 한 노치당 줌이 커진다. 30 → 23.08 (= 30 / 1.3) 로 약 30% 증가.
+      camera.wheelPrecision = 23.08;
       camera.minZ = 0.1;
       camera.panningSensibility = 50;
       camera.inertia = 0.7;
