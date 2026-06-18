@@ -21,6 +21,7 @@ import {
   RotationGizmo,
   ScaleGizmo,
   Scene,
+  StandardMaterial,
   UtilityLayerRenderer,
   Vector3,
 } from "@babylonjs/core";
@@ -109,6 +110,11 @@ interface BabylonSceneProps {
    */
   onMoveSupport: (id: string, newBaseXZ: [number, number]) => void;
   /**
+   * Bridge 모드에서 첫 번째 클릭한 지점. null 이면 표시 X.
+   * 두 번째 클릭으로 확정될 때까지 작은 marker 로 보여준다.
+   */
+  pendingBridgePoint: [number, number, number] | null;
+  /**
    * Z 슬라이스 미리보기 높이 (mm). null 이면 비활성.
    * 활성 시 Y > sliceY 영역의 메쉬가 잘려 단면이 보인다.
    */
@@ -175,6 +181,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       onPickSupport,
       selectedSupportId,
       onMoveSupport,
+      pendingBridgePoint,
       sliceY,
       className = "",
     },
@@ -196,6 +203,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     > | null>(null);
     const sliceOutlineRef = useRef<LinesMesh | null>(null);
     const sliceFillMeshesRef = useRef<Mesh[]>([]);
+    const bridgeMarkerRef = useRef<Mesh | null>(null);
+    const bridgeMarkerMatRef = useRef<StandardMaterial | null>(null);
     const sliceModelMatRef = useRef<ReturnType<
       typeof createSliceFillMaterial
     > | null>(null);
@@ -383,6 +392,12 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       // 빌드플레이트 / 그리드는 별도 plate effect 에서 생성·재생성한다.
 
       supportMaterialRef.current = createSupportMaterial(scene);
+      const bridgeMat = new StandardMaterial("v2_bridge_marker_mat", scene);
+      bridgeMat.diffuseColor = new Color3(1.0, 0.55, 0.15);
+      bridgeMat.emissiveColor = new Color3(0.6, 0.3, 0.1);
+      bridgeMat.specularColor = new Color3(0, 0, 0);
+      bridgeMarkerMatRef.current = bridgeMat;
+
       sliceModelMatRef.current = createSliceFillMaterial(
         scene,
         new Color3(0.85, 0.86, 0.9),
@@ -555,6 +570,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         sliceOutlineRef.current = null;
         for (const fm of sliceFillMeshesRef.current) fm.dispose();
         sliceFillMeshesRef.current = [];
+        bridgeMarkerRef.current?.dispose();
+        bridgeMarkerRef.current = null;
+        bridgeMarkerMatRef.current?.dispose();
+        bridgeMarkerMatRef.current = null;
         sliceModelMatRef.current?.dispose();
         sliceSupportMatRef.current?.dispose();
         sliceModelMatRef.current = null;
@@ -787,6 +806,31 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         sliceOutlineRef.current = ol;
       }
     }, [sliceY, files, supports, supportParams]);
+
+    // 5.6) Bridge pending point marker (작은 주황 sphere).
+    useEffect(() => {
+      const scene = sceneRef.current;
+      const mat = bridgeMarkerMatRef.current;
+      if (!scene || !mat) return;
+
+      bridgeMarkerRef.current?.dispose();
+      bridgeMarkerRef.current = null;
+      if (!pendingBridgePoint) return;
+
+      const m = MeshBuilder.CreateSphere(
+        "v2_bridge_marker",
+        { diameter: 1.4, segments: 10 },
+        scene,
+      );
+      m.position.set(
+        pendingBridgePoint[0],
+        pendingBridgePoint[1],
+        pendingBridgePoint[2],
+      );
+      m.material = mat;
+      m.isPickable = false;
+      bridgeMarkerRef.current = m;
+    }, [pendingBridgePoint]);
 
     // 6) editMode 변경 시:
     //    · STL 메쉬의 PointerDragBehavior detach/attach

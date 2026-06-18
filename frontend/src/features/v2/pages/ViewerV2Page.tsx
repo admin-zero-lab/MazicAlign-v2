@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, Navigate } from "react-router-dom";
 
 import { useProjectV2 } from "../hooks/useProjectsV2";
@@ -64,6 +64,11 @@ const ViewerV2Page: React.FC = () => {
   );
   const [gizmoMode, setGizmoMode] = useState<GizmoMode>("none");
   const [editMode, setEditMode] = useState<EditMode>("select");
+  const [bridgeMode, setBridgeMode] = useState(false);
+  const [pendingBridge, setPendingBridge] = useState<{
+    stlId: string;
+    contact: [number, number, number];
+  } | null>(null);
   const [selectedSupportId, setSelectedSupportId] = useState<string | null>(
     null,
   );
@@ -98,6 +103,16 @@ const ViewerV2Page: React.FC = () => {
   const printerProfile = useCurrentProfile();
 
   useShortcutsListener();
+
+  // Bridge pending 상태에서 Esc 누르면 취소.
+  useEffect(() => {
+    if (!pendingBridge) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPendingBridge(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pendingBridge]);
 
   // ----- 선택 -----
   const handlePick = useCallback(
@@ -206,7 +221,54 @@ const ViewerV2Page: React.FC = () => {
   const handleAddSupportAt = useCallback(
     async (stlId: string, contact: [number, number, number]) => {
       if (!projectId) return;
-      if (contact[1] <= 0.5) return; // 베드에 너무 가까우면 무의미
+
+      // Bridge 모드: 첫 클릭은 pending, 두 번째 클릭에 둘을 잇는 기둥.
+      if (bridgeMode) {
+        if (!pendingBridge) {
+          // 첫 점 — pending 설정 (선택 해제 X).
+          if (contact[1] <= 0.5) return; // 베드 근처 무의미
+          setPendingBridge({ stlId, contact });
+          return;
+        }
+        // 두 번째 점 — 두 점을 잇는 bridge 서포트 추가.
+        const a = pendingBridge.contact;
+        const b = contact;
+        const dx = a[0] - b[0];
+        const dy = a[1] - b[1];
+        const dz = a[2] - b[2];
+        const dist = Math.hypot(dx, dy, dz);
+        if (dist < 1.0) {
+          // 거의 같은 점이면 무시.
+          return;
+        }
+        const newPoint: SupportPointV2 = {
+          id: crypto.randomUUID(),
+          projectId,
+          stlId, // 두 번째 클릭의 모델
+          // base = 첫 점, contact = 두 번째 점.
+          // (createSupportMesh 는 base→contact 방향으로 그린다.)
+          contact: b,
+          base: a,
+          source: "bridge",
+          addedAt: Date.now(),
+        };
+        setPendingBridge(null);
+        await addSupports([newPoint]);
+        useUndoStore.getState().push({
+          label: "add-bridge",
+          undo: async () => {
+            await supportRepo.deleteSupport(newPoint.id);
+            await refreshSupports();
+          },
+          redo: async () => {
+            await addSupports([newPoint]);
+          },
+        });
+        return;
+      }
+
+      // 단점 모드 (기존).
+      if (contact[1] <= 0.5) return;
       const newPoint: SupportPointV2 = {
         id: crypto.randomUUID(),
         projectId,
@@ -228,7 +290,7 @@ const ViewerV2Page: React.FC = () => {
         },
       });
     },
-    [projectId, addSupports, refreshSupports],
+    [projectId, bridgeMode, pendingBridge, addSupports, refreshSupports],
   );
 
   const handleRemoveSupport = useCallback(
@@ -525,6 +587,7 @@ const ViewerV2Page: React.FC = () => {
             onPickSupport={setSelectedSupportId}
             selectedSupportId={selectedSupportId}
             onMoveSupport={handleMoveSupport}
+            pendingBridgePoint={pendingBridge?.contact ?? null}
             sliceY={slicePreview.on ? sliceYNow : null}
           />
 
@@ -543,19 +606,47 @@ const ViewerV2Page: React.FC = () => {
             mode={editMode}
             onChange={(m) => {
               setEditMode(m);
-              if (m === "select") setSelectedSupportId(null);
+              if (m === "select") {
+                setSelectedSupportId(null);
+                setBridgeMode(false);
+                setPendingBridge(null);
+              }
             }}
           />
 
           {editMode === "support" && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-white/95 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-700">
-              <span className="pointer-events-none">
-                <strong>서포트 편집</strong> · 모델 표면 = 추가 · 기둥 클릭 =
-                선택 · <kbd className="px-1 border rounded">Delete</kbd> = 삭제
-              </span>
+              {bridgeMode ? (
+                <span className="pointer-events-none">
+                  <strong>Bridge 모드</strong> ·{" "}
+                  {pendingBridge
+                    ? "두 번째 지점을 클릭"
+                    : "첫 번째 지점을 클릭"}{" "}
+                  · <kbd className="px-1 border rounded">Esc</kbd> = 취소
+                </span>
+              ) : (
+                <span className="pointer-events-none">
+                  <strong>서포트 편집</strong> · 모델 표면 = 추가 · 기둥 클릭
+                  = 선택 · <kbd className="px-1 border rounded">Delete</kbd> =
+                  삭제
+                </span>
+              )}
+              <button
+                onClick={() => {
+                  setBridgeMode((v) => !v);
+                  setPendingBridge(null);
+                }}
+                className={`px-2 py-0.5 text-xs border rounded transition-colors ${
+                  bridgeMode
+                    ? "bg-primary-600 text-white border-primary-600"
+                    : "border-primary-600 text-primary-700 hover:bg-primary-50"
+                }`}
+              >
+                Bridge
+              </button>
               <button
                 onClick={handleDeleteSelectedSupport}
-                disabled={!selectedSupportId}
+                disabled={!selectedSupportId || bridgeMode}
                 className="px-2 py-0.5 text-xs bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
               >
                 선택 삭제
