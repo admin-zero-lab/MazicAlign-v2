@@ -289,12 +289,22 @@ const ViewerV2Page: React.FC = () => {
 
       // 단점 모드 (기존).
       if (contact[1] <= 0.5) return;
+      // base: contact 에서 -Y 로 가장 가까운 표면 (자기 모델 제외).
+      // 다른 STL 위에 단점이 서 있으면 그 모델 상단에 base 부착되어
+      // 기둥 직선이 다른 STL 을 통과하지 않게 된다.
+      const groundY =
+        sceneHandleRef.current?.findSurfaceBelow(
+          contact[0],
+          contact[2],
+          contact[1] - 0.01,
+          [stlId],
+        ) ?? 0;
       const newPoint: SupportPointV2 = {
         id: crypto.randomUUID(),
         projectId,
         stlId,
         contact,
-        base: [contact[0], 0, contact[2]],
+        base: [contact[0], groundY, contact[2]],
         source: "manual",
         addedAt: Date.now(),
       };

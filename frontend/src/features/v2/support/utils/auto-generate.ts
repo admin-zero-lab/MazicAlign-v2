@@ -20,6 +20,7 @@ import type { SupportParams, SupportPointV2 } from "../types";
 export function autoGenerateSupportPoints(
   scene: Scene,
   mesh: Mesh,
+  otherStlMeshes: Mesh[],
   params: SupportParams,
   projectId: string,
   stlId: string,
@@ -65,6 +66,24 @@ export function autoGenerateSupportPoints(
       // 의미 없음 → skip.
       if (info.pickedPoint.y <= 0.5) continue;
 
+      // base 결정: contact 에서 -Y 로 다른 STL 들과 raycast → 가장
+      // 가까운 표면 Y. 없으면 0 (빌드플레이트).
+      const contactPos = info.pickedPoint;
+      let baseY = 0;
+      if (otherStlMeshes.length > 0 && contactPos.y > 0) {
+        const downRay = new Ray(
+          new Vector3(contactPos.x, contactPos.y - 0.01, contactPos.z),
+          new Vector3(0, -1, 0),
+          contactPos.y,
+        );
+        for (const om of otherStlMeshes) {
+          const hit = om.intersects(downRay, false);
+          if (hit.hit && hit.pickedPoint && hit.pickedPoint.y > baseY) {
+            baseY = hit.pickedPoint.y;
+          }
+        }
+      }
+
       points.push({
         id: crypto.randomUUID(),
         projectId,
@@ -74,7 +93,7 @@ export function autoGenerateSupportPoints(
           info.pickedPoint.y,
           info.pickedPoint.z,
         ],
-        base: [info.pickedPoint.x, 0, info.pickedPoint.z],
+        base: [info.pickedPoint.x, baseY, info.pickedPoint.z],
         source: "auto",
         addedAt: now,
       });

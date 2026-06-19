@@ -211,6 +211,20 @@ export interface BabylonSceneHandle {
     [number, number, number],
     [number, number, number],
   ];
+  /**
+   * (x, z) 위치에서 startY 부터 -Y 방향으로 ray 를 발사해 가장 가까운
+   * STL 표면 Y 를 반환. excludeStlIds 의 STL 은 검사에서 제외.
+   * 어떤 STL 도 hit 못하면 0 (빌드플레이트).
+   *
+   * 단점 / 자동 서포트의 base 결정에 쓰임 — base 가 다른 모델 상단에
+   * 자동으로 부착되어 직선 경로가 다른 모델을 통과하지 않게 한다.
+   */
+  findSurfaceBelow: (
+    x: number,
+    z: number,
+    startY: number,
+    excludeStlIds: string[],
+  ) => number;
 }
 
 const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
@@ -1052,10 +1066,15 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           const scene = sceneRef.current;
           if (!scene) return [];
           const out: SupportPointV2[] = [];
-          for (const [stlId, mesh] of meshMapRef.current) {
+          const all = Array.from(meshMapRef.current.entries());
+          for (const [stlId, mesh] of all) {
+            const others = all
+              .filter(([id]) => id !== stlId)
+              .map(([, m]) => m);
             const pts = autoGenerateSupportPoints(
               scene,
               mesh,
+              others,
               params,
               projectId,
               stlId,
@@ -1146,20 +1165,49 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           }
           if (!collides) return cps;
 
-          // 모든 STL 의 max world Y + safety margin.
+          // 충분히 높은 시작점에서 각 변곡점 (X, Z) 으로 -Y ray.
+          // 그 위치의 가장 가까운 STL 상단 + SAFETY 로 lift.
           let maxY = 0;
           for (const mesh of candidates) {
             mesh.computeWorldMatrix(true);
             const y = mesh.getBoundingInfo().boundingBox.maximumWorld.y;
             if (y > maxY) maxY = y;
           }
-          const liftY = maxY + SAFETY_MM;
+          const startY = maxY + 100;
 
-          return [
-            [cps[0][0], Math.max(cps[0][1], liftY), cps[0][2]],
-            [cps[1][0], Math.max(cps[1][1], liftY), cps[1][2]],
-            [cps[2][0], Math.max(cps[2][1], liftY), cps[2][2]],
-          ];
+          const liftCp = (cp: [number, number, number]): [number, number, number] => {
+            const origin = new Vector3(cp[0], startY, cp[2]);
+            const ray = new Ray(origin, new Vector3(0, -1, 0), startY);
+            let surfaceY = 0;
+            for (const mesh of candidates) {
+              const hit = mesh.intersects(ray, false);
+              if (hit.hit && hit.pickedPoint && hit.pickedPoint.y > surfaceY) {
+                surfaceY = hit.pickedPoint.y;
+              }
+            }
+            return [cp[0], Math.max(cp[1], surfaceY + SAFETY_MM), cp[2]];
+          };
+
+          return [liftCp(cps[0]), liftCp(cps[1]), liftCp(cps[2])];
+        },
+        findSurfaceBelow(x, z, startY, excludeStlIds) {
+          const excluded = new Set(excludeStlIds);
+          const candidates: Mesh[] = [];
+          for (const [id, m] of meshMapRef.current) {
+            if (!excluded.has(id)) candidates.push(m);
+          }
+          if (candidates.length === 0) return 0;
+
+          const origin = new Vector3(x, startY, z);
+          const ray = new Ray(origin, new Vector3(0, -1, 0), startY);
+          let bestY = 0;
+          for (const mesh of candidates) {
+            const hit = mesh.intersects(ray, false);
+            if (hit.hit && hit.pickedPoint && hit.pickedPoint.y > bestY) {
+              bestY = hit.pickedPoint.y;
+            }
+          }
+          return bestY;
         },
       }),
       [],
