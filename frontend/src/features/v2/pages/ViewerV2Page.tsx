@@ -381,19 +381,11 @@ const ViewerV2Page: React.FC = () => {
       const target = supports.find((s) => s.id === supportId);
       if (!target || !target.curveControlPoints) return;
       const oldCps = target.curveControlPoints;
-      const proposed: typeof oldCps = [oldCps[0], oldCps[1], oldCps[2]];
-      proposed[idx] = pos;
+      const newCps: typeof oldCps = [oldCps[0], oldCps[1], oldCps[2]];
+      newCps[idx] = pos;
 
-      // 새 경로가 STL 과 교차하면 변곡점 자동 lift.
-      const excludeIds = [target.stlId];
-      if (target.baseStlId) excludeIds.push(target.baseStlId);
-      const newCps =
-        sceneHandleRef.current?.autoRouteBridge(
-          target.base,
-          target.contact,
-          proposed,
-          excludeIds,
-        ) ?? proposed;
+      // 자동 우회 호출 X — 사용자가 끈 위치를 그대로 보존.
+      // 모델 안 침투 시 사용자가 직접 변곡점을 다시 조정한다.
 
       await patchSupport(supportId, { curveControlPoints: newCps });
 
@@ -454,16 +446,8 @@ const ViewerV2Page: React.FC = () => {
         });
         newCps = [shifted[0], shifted[1], shifted[2]];
 
-        // 새 경로가 STL 과 교차하면 변곡점 자동 lift.
-        const excludeIds = [target.stlId];
-        if (target.baseStlId) excludeIds.push(target.baseStlId);
-        newCps =
-          sceneHandleRef.current?.autoRouteBridge(
-            newBase,
-            newContact,
-            newCps,
-            excludeIds,
-          ) ?? newCps;
+        // 자동 우회 호출 X — 사용자가 끈 위치를 그대로 보존.
+        // (끝점 이동 시 변곡점 모양은 비례 이동 결과 그대로 유지.)
       }
 
       const patch: Parameters<typeof patchSupport>[1] = {
