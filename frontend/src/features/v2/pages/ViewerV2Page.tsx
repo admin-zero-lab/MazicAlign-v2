@@ -241,24 +241,19 @@ const ViewerV2Page: React.FC = () => {
           // 거의 같은 점이면 무시.
           return;
         }
-        // 변곡점 3 개 자동 배치: t = 0.25 / 0.50 / 0.75. 직선 상태.
+        // 변곡점 3 개 자동 배치: t = 0.25 / 0.50 / 0.75. 항상 직선 상태로
+        // 시작한다 (자동 우회 X). 모델 안을 통과하더라도 사용자가 변곡점/
+        // 끝점을 드래그하면 그 시점에 autoRouteBridge 가 호출되어 lift.
         const lerp = (t: number): [number, number, number] => [
           a[0] + (b[0] - a[0]) * t,
           a[1] + (b[1] - a[1]) * t,
           a[2] + (b[2] - a[2]) * t,
         ];
-        // 직선 경로가 STL 과 교차하면 변곡점을 자동으로 들어올린다.
-        // 양 끝이 닿아있는 두 모델은 충돌 검사에서 제외.
         const initialCps: [
           [number, number, number],
           [number, number, number],
           [number, number, number],
         ] = [lerp(0.25), lerp(0.5), lerp(0.75)];
-        const routedCps =
-          sceneHandleRef.current?.autoRouteBridge(a, b, initialCps, [
-            stlId,
-            pendingBridge.stlId,
-          ]) ?? initialCps;
         const newPoint: SupportPointV2 = {
           id: crypto.randomUUID(),
           projectId,
@@ -270,7 +265,7 @@ const ViewerV2Page: React.FC = () => {
           base: a,
           source: "bridge",
           addedAt: Date.now(),
-          curveControlPoints: routedCps,
+          curveControlPoints: initialCps,
         };
         setPendingBridge(null);
         await addSupports([newPoint]);
