@@ -136,6 +136,16 @@ interface BabylonSceneProps {
     idx: 0 | 1 | 2,
     pos: [number, number, number],
   ) => void;
+  /**
+   * Bridge 끝점 (base / contact) 을 사용자가 드래그해서 옮겼을 때 호출.
+   * which: 'base' = 첫 번째 클릭으로 정해진 끝, 'contact' = 두 번째 클릭.
+   * 변곡점 비례 이동은 ViewerV2Page handler 가 한 transaction 으로 처리.
+   */
+  onMoveBridgeEndpoint: (
+    supportId: string,
+    which: "base" | "contact",
+    pos: [number, number, number],
+  ) => void;
   className?: string;
 }
 
@@ -202,6 +212,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       bridgeMode,
       sliceY,
       onMoveBridgeControlPoint,
+      onMoveBridgeEndpoint,
       className = "",
     },
     ref,
@@ -266,6 +277,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     onMoveSupportRef.current = onMoveSupport;
     const onMoveBridgeCpRef = useRef(onMoveBridgeControlPoint);
     onMoveBridgeCpRef.current = onMoveBridgeControlPoint;
+    const onMoveBridgeEndpointRef = useRef(onMoveBridgeEndpoint);
+    onMoveBridgeEndpointRef.current = onMoveBridgeEndpoint;
     const selectedSupportRef = useRef<string | null>(selectedSupportId);
     selectedSupportRef.current = selectedSupportId;
     const bridgeModeRef = useRef<boolean>(bridgeMode);
@@ -886,12 +899,13 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       bridgeMarkerRef.current = m;
     }, [pendingBridgePoint]);
 
-    // 5.7) 선택된 Bridge 의 변곡점 3 개를 노란 sphere 로 띄우고
-    //       PointerDragBehavior 로 자유 드래그. drag end 에 콜백 호출.
+    // 5.7) 선택된 Bridge 의 양 끝 (A=주황) + 변곡점 3 개 (Y=노랑) 를
+    //       sphere 로 띄우고 PointerDragBehavior 로 자유 드래그.
     useEffect(() => {
       const scene = sceneRef.current;
-      const mat = bridgeCpMatRef.current;
-      if (!scene || !mat) return;
+      const cpMat = bridgeCpMatRef.current;
+      const endMat = bridgeMarkerMatRef.current;
+      if (!scene || !cpMat || !endMat) return;
 
       // 매번 dispose & 재생성. drag 도중에는 supports 가 안 바뀌므로
       // 끊김 없이 동작.
@@ -902,32 +916,63 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
 
       if (editMode !== "support" || !selectedSupportId) return;
       const sup = supports.find((s) => s.id === selectedSupportId);
-      if (!sup || sup.source !== "bridge" || !sup.curveControlPoints) return;
+      if (!sup || sup.source !== "bridge") return;
 
       const diameter = Math.max(supportParams.bridgeDiameterMm * 1.5, 1.2);
-      for (let i = 0; i < 3; i++) {
-        const cp = sup.curveControlPoints[i];
+
+      // (1) 양 끝 — 주황 sphere.
+      const endpoints: { which: "base" | "contact"; pos: [number, number, number] }[] = [
+        { which: "base", pos: sup.base },
+        { which: "contact", pos: sup.contact },
+      ];
+      for (const ep of endpoints) {
         const sphere = MeshBuilder.CreateSphere(
-          `v2_bridge_cp_${sup.id}_${i}`,
+          `v2_bridge_ep_${sup.id}_${ep.which}`,
           { diameter, segments: 10 },
           scene,
         );
-        sphere.position.set(cp[0], cp[1], cp[2]);
-        sphere.material = mat;
+        sphere.position.set(ep.pos[0], ep.pos[1], ep.pos[2]);
+        sphere.material = endMat;
         sphere.isPickable = true;
-        // 카메라 마주보는 평면에서 자유 드래그. 좌클릭+드래그.
         const drag = new PointerDragBehavior();
         drag.useObjectOrientationForDragging = false;
         sphere.addBehavior(drag);
-        const idx = i as 0 | 1 | 2;
+        const which = ep.which;
         drag.onDragEndObservable.add(() => {
-          onMoveBridgeCpRef.current(sup.id, idx, [
+          onMoveBridgeEndpointRef.current(sup.id, which, [
             sphere.position.x,
             sphere.position.y,
             sphere.position.z,
           ]);
         });
         bridgeCpMeshesRef.current.push(sphere);
+      }
+
+      // (2) 변곡점 3 개 — 노란 sphere.
+      if (sup.curveControlPoints) {
+        for (let i = 0; i < 3; i++) {
+          const cp = sup.curveControlPoints[i];
+          const sphere = MeshBuilder.CreateSphere(
+            `v2_bridge_cp_${sup.id}_${i}`,
+            { diameter, segments: 10 },
+            scene,
+          );
+          sphere.position.set(cp[0], cp[1], cp[2]);
+          sphere.material = cpMat;
+          sphere.isPickable = true;
+          const drag = new PointerDragBehavior();
+          drag.useObjectOrientationForDragging = false;
+          sphere.addBehavior(drag);
+          const idx = i as 0 | 1 | 2;
+          drag.onDragEndObservable.add(() => {
+            onMoveBridgeCpRef.current(sup.id, idx, [
+              sphere.position.x,
+              sphere.position.y,
+              sphere.position.z,
+            ]);
+          });
+          bridgeCpMeshesRef.current.push(sphere);
+        }
       }
     }, [
       editMode,

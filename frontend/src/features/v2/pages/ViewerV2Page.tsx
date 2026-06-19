@@ -382,6 +382,76 @@ const ViewerV2Page: React.FC = () => {
     [supports, patchSupport],
   );
 
+  const handleMoveBridgeEndpoint = useCallback(
+    async (
+      supportId: string,
+      which: "base" | "contact",
+      pos: [number, number, number],
+    ) => {
+      const target = supports.find((s) => s.id === supportId);
+      if (!target || target.source !== "bridge") return;
+
+      const oldBase = target.base;
+      const oldContact = target.contact;
+      const oldCps = target.curveControlPoints;
+
+      const newBase: [number, number, number] =
+        which === "base" ? pos : oldBase;
+      const newContact: [number, number, number] =
+        which === "contact" ? pos : oldContact;
+
+      // 변곡점 비례 이동: t = 0.25 / 0.50 / 0.75 위치 기준으로
+      // (Δbase × (1-t)) + (Δcontact × t) 만큼 함께 이동.
+      // 사용자가 휘어놓은 곡선 모양이 그대로 유지된다.
+      let newCps = oldCps;
+      if (oldCps) {
+        const dBase: [number, number, number] = [
+          newBase[0] - oldBase[0],
+          newBase[1] - oldBase[1],
+          newBase[2] - oldBase[2],
+        ];
+        const dContact: [number, number, number] = [
+          newContact[0] - oldContact[0],
+          newContact[1] - oldContact[1],
+          newContact[2] - oldContact[2],
+        ];
+        const ts = [0.25, 0.5, 0.75];
+        const shifted = ts.map((t, i): [number, number, number] => {
+          const w0 = 1 - t;
+          return [
+            oldCps[i][0] + dBase[0] * w0 + dContact[0] * t,
+            oldCps[i][1] + dBase[1] * w0 + dContact[1] * t,
+            oldCps[i][2] + dBase[2] * w0 + dContact[2] * t,
+          ];
+        });
+        newCps = [shifted[0], shifted[1], shifted[2]];
+      }
+
+      const patch: Parameters<typeof patchSupport>[1] = {
+        base: newBase,
+        contact: newContact,
+      };
+      if (newCps) patch.curveControlPoints = newCps;
+      await patchSupport(supportId, patch);
+
+      useUndoStore.getState().push({
+        label: "move-bridge-endpoint",
+        undo: async () => {
+          const undoPatch: Parameters<typeof patchSupport>[1] = {
+            base: oldBase,
+            contact: oldContact,
+          };
+          if (oldCps) undoPatch.curveControlPoints = oldCps;
+          await patchSupport(supportId, undoPatch);
+        },
+        redo: async () => {
+          await patchSupport(supportId, patch);
+        },
+      });
+    },
+    [supports, patchSupport],
+  );
+
   const handleDeleteSelectedSupport = useCallback(() => {
     if (editMode !== "support" || !selectedSupportId) return;
     void handleRemoveSupport(selectedSupportId);
@@ -626,6 +696,7 @@ const ViewerV2Page: React.FC = () => {
             bridgeMode={bridgeMode}
             sliceY={slicePreview.on ? sliceYNow : null}
             onMoveBridgeControlPoint={handleMoveBridgeControlPoint}
+            onMoveBridgeEndpoint={handleMoveBridgeEndpoint}
           />
 
           <ViewControls
