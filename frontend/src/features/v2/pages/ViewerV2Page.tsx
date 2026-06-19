@@ -247,6 +247,18 @@ const ViewerV2Page: React.FC = () => {
           a[1] + (b[1] - a[1]) * t,
           a[2] + (b[2] - a[2]) * t,
         ];
+        // 직선 경로가 STL 과 교차하면 변곡점을 자동으로 들어올린다.
+        // 양 끝이 닿아있는 두 모델은 충돌 검사에서 제외.
+        const initialCps: [
+          [number, number, number],
+          [number, number, number],
+          [number, number, number],
+        ] = [lerp(0.25), lerp(0.5), lerp(0.75)];
+        const routedCps =
+          sceneHandleRef.current?.autoRouteBridge(a, b, initialCps, [
+            stlId,
+            pendingBridge.stlId,
+          ]) ?? initialCps;
         const newPoint: SupportPointV2 = {
           id: crypto.randomUUID(),
           projectId,
@@ -258,7 +270,7 @@ const ViewerV2Page: React.FC = () => {
           base: a,
           source: "bridge",
           addedAt: Date.now(),
-          curveControlPoints: [lerp(0.25), lerp(0.5), lerp(0.75)],
+          curveControlPoints: routedCps,
         };
         setPendingBridge(null);
         await addSupports([newPoint]);
@@ -364,8 +376,19 @@ const ViewerV2Page: React.FC = () => {
       const target = supports.find((s) => s.id === supportId);
       if (!target || !target.curveControlPoints) return;
       const oldCps = target.curveControlPoints;
-      const newCps: typeof oldCps = [oldCps[0], oldCps[1], oldCps[2]];
-      newCps[idx] = pos;
+      const proposed: typeof oldCps = [oldCps[0], oldCps[1], oldCps[2]];
+      proposed[idx] = pos;
+
+      // 새 경로가 STL 과 교차하면 변곡점 자동 lift.
+      const excludeIds = [target.stlId];
+      if (target.baseStlId) excludeIds.push(target.baseStlId);
+      const newCps =
+        sceneHandleRef.current?.autoRouteBridge(
+          target.base,
+          target.contact,
+          proposed,
+          excludeIds,
+        ) ?? proposed;
 
       await patchSupport(supportId, { curveControlPoints: newCps });
 
@@ -425,6 +448,17 @@ const ViewerV2Page: React.FC = () => {
           ];
         });
         newCps = [shifted[0], shifted[1], shifted[2]];
+
+        // 새 경로가 STL 과 교차하면 변곡점 자동 lift.
+        const excludeIds = [target.stlId];
+        if (target.baseStlId) excludeIds.push(target.baseStlId);
+        newCps =
+          sceneHandleRef.current?.autoRouteBridge(
+            newBase,
+            newContact,
+            newCps,
+            excludeIds,
+          ) ?? newCps;
       }
 
       const patch: Parameters<typeof patchSupport>[1] = {

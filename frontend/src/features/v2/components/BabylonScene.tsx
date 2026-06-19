@@ -18,6 +18,7 @@ import {
   PointerDragBehavior,
   PointerEventTypes,
   PositionGizmo,
+  Ray,
   RotationGizmo,
   ScaleGizmo,
   Scene,
@@ -188,6 +189,28 @@ export interface BabylonSceneHandle {
    * 모델 + 서포트의 부피 (mm³) 합. 출력 시간 / 레진 사용량 추정용.
    */
   getBuildVolumeMm3: () => { model: number; support: number };
+  /**
+   * Bridge 경로 (base → cp1 → cp2 → cp3 → contact) 가 STL 메쉬와
+   * 교차하면 변곡점들을 모든 STL 의 maxY + margin 위로 들어올린 새
+   * 변곡점 배열을 반환. 교차 없으면 입력 그대로.
+   *
+   * excludeStlIds: 충돌 검사에서 제외할 STL (보통 base, contact 가 닿아
+   *   있는 두 모델 — 이 두 모델 표면에 의도적으로 끝점이 박혀 있으므로).
+   */
+  autoRouteBridge: (
+    base: [number, number, number],
+    contact: [number, number, number],
+    cps: [
+      [number, number, number],
+      [number, number, number],
+      [number, number, number],
+    ],
+    excludeStlIds: string[],
+  ) => [
+    [number, number, number],
+    [number, number, number],
+    [number, number, number],
+  ];
 }
 
 const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
@@ -375,10 +398,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         stencil: true,
       });
       const scene = new Scene(engine);
-      scene.clearColor = new Color4(0.94, 0.95, 0.97, 1);
-      // 셰이딩이 0 에 가까운 면 (예: cylinder 옆면) 이 새카맣게
-      // 보이지 않도록 ambient 를 약간 둔다.
-      scene.ambientColor = new Color3(0.45, 0.46, 0.5);
+      // ChiTuBox 풍 어두운 회색 배경. 모델의 청록색이 더 또렷.
+      scene.clearColor = new Color4(0.36, 0.37, 0.4, 1);
+      // ambient 줄여 그림자/대비 강화 (옛: 0.45 → 0.22).
+      scene.ambientColor = new Color3(0.22, 0.23, 0.26);
 
       const camera = new ArcRotateCamera(
         "cam",
@@ -396,39 +419,41 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       camera.panningSensibility = 50;
       camera.inertia = 0.7;
 
+      // ChiTuBox 풍: 위는 강하게, 옆/아래는 약하게 → 윗면 밝고 옆면
+      // 어두운 명확한 그림자 대비. 라이트 4 개 다 hemispheric 으로
+      // 부드러운 wrap-around 유지하면서 상대 intensity 만 조정.
       const lightTop = new HemisphericLight(
         "lightTop",
         new Vector3(0.2, 1, 0.3),
         scene,
       );
-      lightTop.intensity = 0.7;
+      lightTop.intensity = 1.05; // 위 빛 강화 (0.7 → 1.05)
       lightTop.diffuse = new Color3(1, 1, 1);
-      lightTop.specular = new Color3(0.1, 0.1, 0.1);
+      lightTop.specular = new Color3(0.05, 0.05, 0.05);
 
       const lightBottom = new HemisphericLight(
         "lightBottom",
         new Vector3(0, -1, 0),
         scene,
       );
-      lightBottom.intensity = 0.2;
+      lightBottom.intensity = 0.06; // 아래 거의 끔 (0.2 → 0.06)
 
-      // 측면 ‘wrap-around’ 보강 — 두 광이 거의 직교라 옆면이 새카맣게
-      // 보이는 경우 (cylinder · 둥근 모델) 대응.
+      // 측면 보강 — cylinder 등 둥근 모델 옆면이 새카매지지 않게.
       const lightSideA = new HemisphericLight(
         "lightSideA",
         new Vector3(-1, 0.3, 0.4),
         scene,
       );
-      lightSideA.intensity = 0.4;
-      lightSideA.specular = new Color3(0.05, 0.05, 0.05);
+      lightSideA.intensity = 0.18; // 0.4 → 0.18
+      lightSideA.specular = new Color3(0.03, 0.03, 0.03);
 
       const lightSideB = new HemisphericLight(
         "lightSideB",
         new Vector3(1, 0.3, -0.4),
         scene,
       );
-      lightSideB.intensity = 0.4;
-      lightSideB.specular = new Color3(0.05, 0.05, 0.05);
+      lightSideB.intensity = 0.18; // 0.4 → 0.18
+      lightSideB.specular = new Color3(0.03, 0.03, 0.03);
 
       // 빌드플레이트 / 그리드는 별도 plate effect 에서 생성·재생성한다.
 
@@ -1086,6 +1111,55 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
             support += computeMeshVolumeMm3(sm);
           }
           return { model, support };
+        },
+        autoRouteBridge(base, contact, cps, excludeStlIds) {
+          const SAFETY_MM = 5;
+          const excluded = new Set(excludeStlIds);
+          const candidates: Mesh[] = [];
+          for (const [id, m] of meshMapRef.current) {
+            if (!excluded.has(id)) candidates.push(m);
+          }
+          if (candidates.length === 0) return cps;
+
+          // 경로 4 segment 가 어느 한 STL 과라도 교차하는지 검사.
+          const path = [
+            new Vector3(base[0], base[1], base[2]),
+            new Vector3(cps[0][0], cps[0][1], cps[0][2]),
+            new Vector3(cps[1][0], cps[1][1], cps[1][2]),
+            new Vector3(cps[2][0], cps[2][1], cps[2][2]),
+            new Vector3(contact[0], contact[1], contact[2]),
+          ];
+          let collides = false;
+          for (let i = 0; i < path.length - 1 && !collides; i++) {
+            const dir = path[i + 1].subtract(path[i]);
+            const len = dir.length();
+            if (len < 1e-6) continue;
+            dir.scaleInPlace(1 / len);
+            const ray = new Ray(path[i], dir, len);
+            for (const mesh of candidates) {
+              const hit = mesh.intersects(ray, false);
+              if (hit.hit) {
+                collides = true;
+                break;
+              }
+            }
+          }
+          if (!collides) return cps;
+
+          // 모든 STL 의 max world Y + safety margin.
+          let maxY = 0;
+          for (const mesh of candidates) {
+            mesh.computeWorldMatrix(true);
+            const y = mesh.getBoundingInfo().boundingBox.maximumWorld.y;
+            if (y > maxY) maxY = y;
+          }
+          const liftY = maxY + SAFETY_MM;
+
+          return [
+            [cps[0][0], Math.max(cps[0][1], liftY), cps[0][2]],
+            [cps[1][0], Math.max(cps[1][1], liftY), cps[1][2]],
+            [cps[2][0], Math.max(cps[2][1], liftY), cps[2][2]],
+          ];
         },
       }),
       [],

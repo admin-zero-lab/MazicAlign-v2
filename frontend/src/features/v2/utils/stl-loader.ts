@@ -55,10 +55,10 @@ export async function loadStlIntoScene(
   // 2) 빌드플레이트에 정렬 (XZ center, Y base=liftMm).
   alignMeshToPlate(mesh, liftMm);
 
-  // 3) Material.
+  // 3) Material — ChiTuBox 풍 청록빛 파란색.
   const mat = new StandardMaterial(`${meshName}-mat`, scene);
-  mat.diffuseColor = new Color3(1, 1, 1);
-  mat.specularColor = new Color3(0.12, 0.12, 0.12);
+  mat.diffuseColor = new Color3(0.19, 0.55, 0.82); // 청록빛 파랑
+  mat.specularColor = new Color3(0.04, 0.04, 0.04); // 거의 무광 (matte)
   // scene.ambientColor 가 적용되려면 material 측의 ambientColor 가
   // 0 이 아니어야 한다 (둘은 곱셈으로 결합).
   mat.ambientColor = new Color3(1, 1, 1);
