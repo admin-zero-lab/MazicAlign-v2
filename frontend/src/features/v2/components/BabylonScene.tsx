@@ -622,7 +622,13 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           for (const [id, mesh] of meshMapRef.current) {
             if (mesh === picked && info.pickInfo?.pickedPoint) {
               const p = info.pickInfo.pickedPoint;
-              onAddSupportRef.current(id, [p.x, p.y, p.z]);
+              // 표면 안쪽으로 살짝 push → 서포트 끝이 모델에 박혀 void 없이 부착.
+              const n = info.pickInfo.getNormal(true, true);
+              const PEN = 0.3;
+              const cx = n ? p.x - n.x * PEN : p.x;
+              const cy = n ? p.y - n.y * PEN : p.y;
+              const cz = n ? p.z - n.z * PEN : p.z;
+              onAddSupportRef.current(id, [cx, cy, cz]);
               if (!bridge) onPickSupportRef.current(null);
               return;
             }

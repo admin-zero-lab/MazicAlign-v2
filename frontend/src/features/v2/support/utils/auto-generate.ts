@@ -66,15 +66,21 @@ export function autoGenerateSupportPoints(
       // 의미 없음 → skip.
       if (info.pickedPoint.y <= 0.5) continue;
 
+      // contact 를 표면 안쪽으로 살짝 push → 서포트 끝이 모델에 박혀
+      // void 없이 부착. normal 은 자동 생성 시 이미 위에서 구함.
+      const PEN = 0.3;
+      const contactX = info.pickedPoint.x - normal.x * PEN;
+      const contactY = info.pickedPoint.y - normal.y * PEN;
+      const contactZ = info.pickedPoint.z - normal.z * PEN;
+
       // base 결정: contact 에서 -Y 로 다른 STL 들과 raycast → 가장
       // 가까운 표면 Y. 없으면 0 (빌드플레이트).
-      const contactPos = info.pickedPoint;
       let baseY = 0;
-      if (otherStlMeshes.length > 0 && contactPos.y > 0) {
+      if (otherStlMeshes.length > 0 && contactY > 0) {
         const downRay = new Ray(
-          new Vector3(contactPos.x, contactPos.y - 0.01, contactPos.z),
+          new Vector3(contactX, contactY - 0.01, contactZ),
           new Vector3(0, -1, 0),
-          contactPos.y,
+          contactY,
         );
         for (const om of otherStlMeshes) {
           const hit = om.intersects(downRay, false);
@@ -88,12 +94,8 @@ export function autoGenerateSupportPoints(
         id: crypto.randomUUID(),
         projectId,
         stlId,
-        contact: [
-          info.pickedPoint.x,
-          info.pickedPoint.y,
-          info.pickedPoint.z,
-        ],
-        base: [info.pickedPoint.x, baseY, info.pickedPoint.z],
+        contact: [contactX, contactY, contactZ],
+        base: [contactX, baseY, contactZ],
         source: "auto",
         addedAt: now,
       });
