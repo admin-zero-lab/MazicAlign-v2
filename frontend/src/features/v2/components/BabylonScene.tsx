@@ -272,9 +272,12 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     const sliceFillMeshesRef = useRef<Mesh[]>([]);
     const bridgeMarkerRef = useRef<Mesh | null>(null);
     const bridgeMarkerMatRef = useRef<StandardMaterial | null>(null);
-    // Bridge 변곡점 sphere (선택된 bridge 일 때만 0..3 개).
+    // Bridge 변곡점 + A/B 끝점 sphere.
+    // 선택된 Bridge: 큰 sphere (드래그 가능, 변곡점 포함).
+    // Bridge 모드 + 안 선택된 Bridge: A/B 작은 sphere (시각화만).
     const bridgeCpMeshesRef = useRef<Mesh[]>([]);
     const bridgeCpMatRef = useRef<StandardMaterial | null>(null);
+    const bridgeBMatRef = useRef<StandardMaterial | null>(null); // B 끝점 (청록)
     const sliceModelMatRef = useRef<ReturnType<
       typeof createSliceFillMaterial
     > | null>(null);
@@ -484,6 +487,13 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       cpMat.emissiveColor = new Color3(0.5, 0.42, 0.05);
       cpMat.specularColor = new Color3(0, 0, 0);
       bridgeCpMatRef.current = cpMat;
+
+      // Bridge B 끝점 (청록) — A 는 기존 주황 marker mat 재사용.
+      const bMat = new StandardMaterial("v2_bridge_b_mat", scene);
+      bMat.diffuseColor = new Color3(0.2, 0.7, 0.85);
+      bMat.emissiveColor = new Color3(0.1, 0.4, 0.5);
+      bMat.specularColor = new Color3(0, 0, 0);
+      bridgeBMatRef.current = bMat;
 
       sliceModelMatRef.current = createSliceFillMaterial(
         scene,
@@ -945,13 +955,17 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       bridgeMarkerRef.current = m;
     }, [pendingBridgePoint]);
 
-    // 5.7) 선택된 Bridge 의 양 끝 (A=주황) + 변곡점 3 개 (Y=노랑) 를
-    //       sphere 로 띄우고 PointerDragBehavior 로 자유 드래그.
+    // 5.7) Bridge 시각화:
+    //   · Bridge 모드 활성 → 모든 Bridge 의 A (주황) / B (청록) 끝점을
+    //     작은 sphere 로 표시 (시각화만, 드래그 X).
+    //   · 선택된 Bridge → 큰 sphere 로 A/B 표시 + 변곡점 3 개 (노랑),
+    //     PointerDragBehavior 로 드래그 가능.
     useEffect(() => {
       const scene = sceneRef.current;
       const cpMat = bridgeCpMatRef.current;
-      const endMat = bridgeMarkerMatRef.current;
-      if (!scene || !cpMat || !endMat) return;
+      const aMat = bridgeMarkerMatRef.current; // A = 주황 (기존 marker mat)
+      const bMat = bridgeBMatRef.current; // B = 청록
+      if (!scene || !cpMat || !aMat || !bMat) return;
 
       // 매번 dispose & 재생성. drag 도중에는 supports 가 안 바뀌므로
       // 끊김 없이 동작.
@@ -960,25 +974,63 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       }
       bridgeCpMeshesRef.current = [];
 
-      if (editMode !== "support" || !selectedSupportId) return;
-      const sup = supports.find((s) => s.id === selectedSupportId);
-      if (!sup || sup.source !== "bridge") return;
+      if (editMode !== "support") return;
 
-      const diameter = Math.max(supportParams.bridgeDiameterMm * 1.5, 1.2);
+      const bridges = supports.filter((s) => s.source === "bridge");
+      const dBig = Math.max(supportParams.bridgeDiameterMm * 1.5, 1.2);
+      const dSmall = Math.max(supportParams.bridgeDiameterMm * 1.0, 0.8);
 
-      // (1) 양 끝 — 주황 sphere.
-      const endpoints: { which: "base" | "contact"; pos: [number, number, number] }[] = [
-        { which: "base", pos: sup.base },
-        { which: "contact", pos: sup.contact },
+      // (1) Bridge 모드 → 안 선택된 Bridge 들의 A / B 시각화.
+      if (bridgeMode) {
+        for (const sup of bridges) {
+          if (sup.id === selectedSupportId) continue; // 선택된 건 (2) 에서.
+          const aSphere = MeshBuilder.CreateSphere(
+            `v2_bridge_a_viz_${sup.id}`,
+            { diameter: dSmall, segments: 10 },
+            scene,
+          );
+          aSphere.position.set(sup.base[0], sup.base[1], sup.base[2]);
+          aSphere.material = aMat;
+          aSphere.isPickable = false;
+          bridgeCpMeshesRef.current.push(aSphere);
+
+          const bSphere = MeshBuilder.CreateSphere(
+            `v2_bridge_b_viz_${sup.id}`,
+            { diameter: dSmall, segments: 10 },
+            scene,
+          );
+          bSphere.position.set(
+            sup.contact[0],
+            sup.contact[1],
+            sup.contact[2],
+          );
+          bSphere.material = bMat;
+          bSphere.isPickable = false;
+          bridgeCpMeshesRef.current.push(bSphere);
+        }
+      }
+
+      // (2) 선택된 Bridge → A/B 큰 sphere (드래그) + 변곡점 (노랑).
+      if (!selectedSupportId) return;
+      const sup = bridges.find((s) => s.id === selectedSupportId);
+      if (!sup) return;
+
+      const endpoints: {
+        which: "base" | "contact";
+        pos: [number, number, number];
+        mat: StandardMaterial;
+      }[] = [
+        { which: "base", pos: sup.base, mat: aMat },
+        { which: "contact", pos: sup.contact, mat: bMat },
       ];
       for (const ep of endpoints) {
         const sphere = MeshBuilder.CreateSphere(
           `v2_bridge_ep_${sup.id}_${ep.which}`,
-          { diameter, segments: 10 },
+          { diameter: dBig, segments: 10 },
           scene,
         );
         sphere.position.set(ep.pos[0], ep.pos[1], ep.pos[2]);
-        sphere.material = endMat;
+        sphere.material = ep.mat;
         sphere.isPickable = true;
         const drag = new PointerDragBehavior();
         drag.useObjectOrientationForDragging = false;
@@ -994,13 +1046,12 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         bridgeCpMeshesRef.current.push(sphere);
       }
 
-      // (2) 변곡점 3 개 — 노란 sphere.
       if (sup.curveControlPoints) {
         for (let i = 0; i < 3; i++) {
           const cp = sup.curveControlPoints[i];
           const sphere = MeshBuilder.CreateSphere(
             `v2_bridge_cp_${sup.id}_${i}`,
-            { diameter, segments: 10 },
+            { diameter: dBig, segments: 10 },
             scene,
           );
           sphere.position.set(cp[0], cp[1], cp[2]);
@@ -1022,6 +1073,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       }
     }, [
       editMode,
+      bridgeMode,
       selectedSupportId,
       supports,
       supportParams.bridgeDiameterMm,
