@@ -622,9 +622,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           for (const [id, mesh] of meshMapRef.current) {
             if (mesh === picked && info.pickInfo?.pickedPoint) {
               const p = info.pickInfo.pickedPoint;
-              // 표면 안쪽으로 살짝 push → 서포트 끝이 모델에 박혀 void 없이 부착.
+              // 표면 안쪽으로 push → 서포트 끝 cap 이 표면 밖으로
+              // 튀어나오지 않게. Bridge 는 굵기가 커서 더 깊이.
               const n = info.pickInfo.getNormal(true, true);
-              const PEN = 0.3;
+              const PEN = bridge ? 0.8 : 0.3;
               const cx = n ? p.x - n.x * PEN : p.x;
               const cy = n ? p.y - n.y * PEN : p.y;
               const cz = n ? p.z - n.z * PEN : p.z;

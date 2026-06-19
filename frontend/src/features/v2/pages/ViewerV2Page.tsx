@@ -33,6 +33,7 @@ import PrinterProfileSelect from "../components/PrinterProfileSelect";
 import PrinterProfileDialog from "../components/PrinterProfileDialog";
 import { useCurrentProfile } from "../hooks/usePrinterProfileStore";
 import { IDENTITY_TRANSFORM, type TransformV2 } from "../types/transform";
+import { transformPointBetween } from "../utils/transform";
 
 /**
  * v2 프로젝트 작업 화면.
@@ -581,18 +582,114 @@ const ViewerV2Page: React.FC = () => {
     (id: string, start: TransformV2, end: TransformV2) => {
       // 즉시 DB 반영. (그 사이 메쉬는 이미 preview 로 반영돼 있음)
       void updateTransform(id, end);
-      // Undo entry 등록 — undo/redo 모두 DB 반영 (씬도 따라 갱신)
+
+      // 부착된 서포트도 transform delta 만큼 같이 이동시킨다.
+      //   단점/auto: contact, base 둘 다 동일 변환.
+      //   Bridge   : 자기 쪽 끝점만 변환 + 변곡점은 끝점 비례 이동.
+      //
+      // 영향 받는 서포트: stlId == id (contact 쪽) 또는 baseStlId == id
+      // (Bridge base 쪽).
+      const affected = supports.filter(
+        (s) => s.stlId === id || s.baseStlId === id,
+      );
+
+      type CpsTriple = [
+        [number, number, number],
+        [number, number, number],
+        [number, number, number],
+      ];
+      type SupportPatch = {
+        contact: [number, number, number];
+        base: [number, number, number];
+        curveControlPoints?: CpsTriple;
+      };
+      const oldStates: { id: string; patch: SupportPatch }[] = [];
+      const newPatches: { id: string; patch: SupportPatch }[] = [];
+
+      for (const sup of affected) {
+        const isBridge = sup.source === "bridge";
+        const contactSide = sup.stlId === id;
+        // 단점/auto 는 baseStlId 가 없으니 contact 쪽이 움직이면 base 도 함께.
+        const baseSide =
+          sup.baseStlId === id || (!isBridge && contactSide);
+
+        const newContact = contactSide
+          ? transformPointBetween(sup.contact, start, end)
+          : sup.contact;
+        const newBase = baseSide
+          ? transformPointBetween(sup.base, start, end)
+          : sup.base;
+
+        let newCps: CpsTriple | undefined = sup.curveControlPoints
+          ? [
+              sup.curveControlPoints[0],
+              sup.curveControlPoints[1],
+              sup.curveControlPoints[2],
+            ]
+          : undefined;
+
+        if (isBridge && sup.curveControlPoints) {
+          const dC: [number, number, number] = [
+            newContact[0] - sup.contact[0],
+            newContact[1] - sup.contact[1],
+            newContact[2] - sup.contact[2],
+          ];
+          const dB: [number, number, number] = [
+            newBase[0] - sup.base[0],
+            newBase[1] - sup.base[1],
+            newBase[2] - sup.base[2],
+          ];
+          const ts = [0.25, 0.5, 0.75];
+          const cps = sup.curveControlPoints;
+          newCps = ts.map((t, i): [number, number, number] => {
+            const w0 = 1 - t;
+            return [
+              cps[i][0] + dB[0] * w0 + dC[0] * t,
+              cps[i][1] + dB[1] * w0 + dC[1] * t,
+              cps[i][2] + dB[2] * w0 + dC[2] * t,
+            ];
+          }) as CpsTriple;
+        }
+
+        const oldPatch: SupportPatch = {
+          contact: sup.contact,
+          base: sup.base,
+        };
+        if (sup.curveControlPoints) {
+          oldPatch.curveControlPoints = sup.curveControlPoints;
+        }
+        const newPatch: SupportPatch = {
+          contact: newContact,
+          base: newBase,
+        };
+        if (newCps) newPatch.curveControlPoints = newCps;
+
+        oldStates.push({ id: sup.id, patch: oldPatch });
+        newPatches.push({ id: sup.id, patch: newPatch });
+      }
+
+      void Promise.all(
+        newPatches.map(({ id: sid, patch }) => patchSupport(sid, patch)),
+      );
+
+      // Undo entry: STL transform + 모든 영향 받은 서포트 복원/재적용.
       useUndoStore.getState().push({
         label: "transform",
         undo: async () => {
           await updateTransform(id, start);
+          await Promise.all(
+            oldStates.map(({ id: sid, patch }) => patchSupport(sid, patch)),
+          );
         },
         redo: async () => {
           await updateTransform(id, end);
+          await Promise.all(
+            newPatches.map(({ id: sid, patch }) => patchSupport(sid, patch)),
+          );
         },
       });
     },
-    [updateTransform],
+    [updateTransform, supports, patchSupport],
   );
 
   if (!projectId) {
