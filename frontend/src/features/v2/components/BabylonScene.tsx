@@ -964,7 +964,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       const scene = sceneRef.current;
       const cpMat = bridgeCpMatRef.current;
       const aMat = bridgeMarkerMatRef.current; // A = 주황 (기존 marker mat)
-      const bMat = bridgeBMatRef.current; // B = 청록
+      // B 도 주황 — 사용자 요청. (bridgeBMatRef 는 보존, 추후 구분 필요 시 사용.)
+      const bMat = bridgeMarkerMatRef.current;
       if (!scene || !cpMat || !aMat || !bMat) return;
 
       // 매번 dispose & 재생성. drag 도중에는 supports 가 안 바뀌므로
