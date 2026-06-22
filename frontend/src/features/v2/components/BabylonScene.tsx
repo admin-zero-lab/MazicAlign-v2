@@ -420,6 +420,11 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       // ambient 줄여 그림자/대비 강화 (옛: 0.45 → 0.22).
       scene.ambientColor = new Color3(0.22, 0.23, 0.26);
 
+      // Bridge handle (A/B/변곡점 sphere) 용 별도 렌더링 그룹.
+      // 그룹 1 그릴 때 depth buffer 를 새로 클리어 → 모델 안에 박혀
+      // 있어도 항상 위에 보인다.
+      scene.setRenderingAutoClearDepthStencil(1, true, true, false);
+
       const camera = new ArcRotateCamera(
         "cam",
         -Math.PI / 4,
@@ -952,6 +957,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       );
       m.material = mat;
       m.isPickable = false;
+      m.renderingGroupId = 1;
       bridgeMarkerRef.current = m;
     }, [pendingBridgePoint]);
 
@@ -993,6 +999,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           aSphere.position.set(sup.base[0], sup.base[1], sup.base[2]);
           aSphere.material = aMat;
           aSphere.isPickable = false;
+          aSphere.renderingGroupId = 1;
           bridgeCpMeshesRef.current.push(aSphere);
 
           const bSphere = MeshBuilder.CreateSphere(
@@ -1007,6 +1014,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           );
           bSphere.material = bMat;
           bSphere.isPickable = false;
+          bSphere.renderingGroupId = 1;
           bridgeCpMeshesRef.current.push(bSphere);
         }
       }
@@ -1033,6 +1041,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         sphere.position.set(ep.pos[0], ep.pos[1], ep.pos[2]);
         sphere.material = ep.mat;
         sphere.isPickable = true;
+        sphere.renderingGroupId = 1;
         const drag = new PointerDragBehavior();
         drag.useObjectOrientationForDragging = false;
         sphere.addBehavior(drag);
@@ -1058,6 +1067,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           sphere.position.set(cp[0], cp[1], cp[2]);
           sphere.material = cpMat;
           sphere.isPickable = true;
+          sphere.renderingGroupId = 1;
           const drag = new PointerDragBehavior();
           drag.useObjectOrientationForDragging = false;
           sphere.addBehavior(drag);
