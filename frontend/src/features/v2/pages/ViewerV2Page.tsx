@@ -69,6 +69,7 @@ const ViewerV2Page: React.FC = () => {
   const [pendingBridge, setPendingBridge] = useState<{
     stlId: string;
     contact: [number, number, number];
+    normal?: [number, number, number];
   } | null>(null);
   const [selectedSupportId, setSelectedSupportId] = useState<string | null>(
     null,
@@ -220,7 +221,11 @@ const ViewerV2Page: React.FC = () => {
 
   // ----- 수동 편집 -----
   const handleAddSupportAt = useCallback(
-    async (stlId: string, contact: [number, number, number]) => {
+    async (
+      stlId: string,
+      contact: [number, number, number],
+      normal?: [number, number, number],
+    ) => {
       if (!projectId) return;
 
       // Bridge 모드: 첫 클릭은 pending, 두 번째 클릭에 둘을 잇는 기둥.
@@ -228,7 +233,7 @@ const ViewerV2Page: React.FC = () => {
         if (!pendingBridge) {
           // 첫 점 — pending 설정 (선택 해제 X).
           if (contact[1] <= 0.5) return; // 베드 근처 무의미
-          setPendingBridge({ stlId, contact });
+          setPendingBridge({ stlId, contact, normal });
           return;
         }
         // 두 번째 점 — 두 점을 잇는 bridge 서포트 추가.
@@ -267,6 +272,8 @@ const ViewerV2Page: React.FC = () => {
           source: "bridge",
           addedAt: Date.now(),
           curveControlPoints: initialCps,
+          contactNormal: normal,
+          baseNormal: pendingBridge.normal,
         };
         setPendingBridge(null);
         await addSupports([newPoint]);
@@ -303,6 +310,7 @@ const ViewerV2Page: React.FC = () => {
         base: [contact[0], groundY, contact[2]],
         source: "manual",
         addedAt: Date.now(),
+        contactNormal: normal,
       };
       await addSupports([newPoint]);
       useUndoStore.getState().push({

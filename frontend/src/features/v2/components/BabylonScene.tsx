@@ -92,10 +92,13 @@ interface BabylonSceneProps {
   plateDepthMm: number;
   /** 'select' / 'support' — 모드별 픽·드래그·Gizmo 동작. */
   editMode: EditMode;
-  /** 'support' 모드에서 모델 표면 픽 시 → 그 위치에 서포트 추가. */
+  /** 'support' 모드에서 모델 표면 픽 시 → 그 위치에 서포트 추가.
+   *  contact 는 표면 안쪽으로 push 된 좌표. normal 은 표면 외부
+   *  방향 단위 벡터 (옵셔널 — 기둥 위 클릭 등 normal 없는 경우). */
   onAddSupportAt: (
     stlId: string,
     contact: [number, number, number],
+    normal?: [number, number, number],
   ) => void;
   /**
    * 'support' 모드에서 기둥 픽 시 선택, 빈 공간 픽 시 null.
@@ -644,7 +647,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
               const cx = n ? p.x - n.x * PEN : p.x;
               const cy = n ? p.y - n.y * PEN : p.y;
               const cz = n ? p.z - n.z * PEN : p.z;
-              onAddSupportRef.current(id, [cx, cy, cz]);
+              const nArr: [number, number, number] | undefined = n
+                ? [n.x, n.y, n.z]
+                : undefined;
+              onAddSupportRef.current(id, [cx, cy, cz], nArr);
               if (!bridge) onPickSupportRef.current(null);
               return;
             }
@@ -987,31 +993,49 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       const dBig = Math.max(supportParams.bridgeDiameterMm * 1.5, 1.2);
       const dSmall = Math.max(supportParams.bridgeDiameterMm * 1.0, 0.8);
 
+      // 저장된 contact/base 는 표면 안쪽 push 된 상태. sphere 는
+      // 그 반대로 normal × LIFT 만큼 밖으로 끌어내서 사용자가 표면
+      // 위에서 보고 클릭/드래그할 수 있게 한다. (메시 cap 은 안쪽
+      // 박힌 그대로 유지 → void 없는 부착.)
+      const LIFT = 0.8;
+      const liftOut = (
+        pos: [number, number, number],
+        n: [number, number, number] | undefined,
+      ): [number, number, number] => {
+        if (!n) return pos;
+        return [pos[0] + n[0] * LIFT, pos[1] + n[1] * LIFT, pos[2] + n[2] * LIFT];
+      };
+      const undoLift = (
+        pos: { x: number; y: number; z: number },
+        n: [number, number, number] | undefined,
+      ): [number, number, number] => {
+        if (!n) return [pos.x, pos.y, pos.z];
+        return [pos.x - n[0] * LIFT, pos.y - n[1] * LIFT, pos.z - n[2] * LIFT];
+      };
+
       // (1) Bridge 모드 → 안 선택된 Bridge 들의 A / B 시각화.
       if (bridgeMode) {
         for (const sup of bridges) {
           if (sup.id === selectedSupportId) continue; // 선택된 건 (2) 에서.
+          const aPos = liftOut(sup.base, sup.baseNormal);
           const aSphere = MeshBuilder.CreateSphere(
             `v2_bridge_a_viz_${sup.id}`,
             { diameter: dSmall, segments: 10 },
             scene,
           );
-          aSphere.position.set(sup.base[0], sup.base[1], sup.base[2]);
+          aSphere.position.set(aPos[0], aPos[1], aPos[2]);
           aSphere.material = aMat;
           aSphere.isPickable = false;
           aSphere.renderingGroupId = 1;
           bridgeCpMeshesRef.current.push(aSphere);
 
+          const bPos = liftOut(sup.contact, sup.contactNormal);
           const bSphere = MeshBuilder.CreateSphere(
             `v2_bridge_b_viz_${sup.id}`,
             { diameter: dSmall, segments: 10 },
             scene,
           );
-          bSphere.position.set(
-            sup.contact[0],
-            sup.contact[1],
-            sup.contact[2],
-          );
+          bSphere.position.set(bPos[0], bPos[1], bPos[2]);
           bSphere.material = bMat;
           bSphere.isPickable = false;
           bSphere.renderingGroupId = 1;
@@ -1027,18 +1051,25 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       const endpoints: {
         which: "base" | "contact";
         pos: [number, number, number];
+        normal: [number, number, number] | undefined;
         mat: StandardMaterial;
       }[] = [
-        { which: "base", pos: sup.base, mat: aMat },
-        { which: "contact", pos: sup.contact, mat: bMat },
+        { which: "base", pos: sup.base, normal: sup.baseNormal, mat: aMat },
+        {
+          which: "contact",
+          pos: sup.contact,
+          normal: sup.contactNormal,
+          mat: bMat,
+        },
       ];
       for (const ep of endpoints) {
+        const visPos = liftOut(ep.pos, ep.normal);
         const sphere = MeshBuilder.CreateSphere(
           `v2_bridge_ep_${sup.id}_${ep.which}`,
           { diameter: dBig, segments: 10 },
           scene,
         );
-        sphere.position.set(ep.pos[0], ep.pos[1], ep.pos[2]);
+        sphere.position.set(visPos[0], visPos[1], visPos[2]);
         sphere.material = ep.mat;
         sphere.isPickable = true;
         sphere.renderingGroupId = 1;
@@ -1046,12 +1077,15 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         drag.useObjectOrientationForDragging = false;
         sphere.addBehavior(drag);
         const which = ep.which;
+        const epNormal = ep.normal;
         drag.onDragEndObservable.add(() => {
-          onMoveBridgeEndpointRef.current(sup.id, which, [
-            sphere.position.x,
-            sphere.position.y,
-            sphere.position.z,
-          ]);
+          // 드래그된 sphere 위치 (표면 밖) → normal 만큼 안쪽으로
+          // 되돌려 저장. normal 이 없으면 그대로.
+          const stored = undoLift(
+            { x: sphere.position.x, y: sphere.position.y, z: sphere.position.z },
+            epNormal,
+          );
+          onMoveBridgeEndpointRef.current(sup.id, which, stored);
         });
         bridgeCpMeshesRef.current.push(sphere);
       }

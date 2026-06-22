@@ -85,4 +85,13 @@ export interface SupportPointV2 {
     [number, number, number],
     [number, number, number],
   ];
+  /**
+   * Contact 위치의 표면 normal (모델 외부 방향, 단위 벡터).
+   * 옵셔널 — 옛 데이터는 undefined. 시각화 sphere 를 표면 밖으로
+   * lift 하는 데 쓰임. 저장된 contact 좌표 자체는 표면 안쪽 push 된
+   * 상태를 유지해서 서포트 메시 cap 이 void 없이 부착된다.
+   */
+  contactNormal?: [number, number, number];
+  /** Base 위치 normal (Bridge 전용). undefined 면 (0, 1, 0). */
+  baseNormal?: [number, number, number];
 }
