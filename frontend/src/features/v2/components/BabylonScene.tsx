@@ -306,6 +306,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     overhangRef.current = overhangAngleDeg;
     const liftRef = useRef<number>(supportParams.liftMm);
     liftRef.current = supportParams.liftMm;
+    const bridgeDiamRef = useRef<number>(supportParams.bridgeDiameterMm);
+    bridgeDiamRef.current = supportParams.bridgeDiameterMm;
     const plateWRef = useRef<number>(plateWidthMm);
     plateWRef.current = plateWidthMm;
     const plateDRef = useRef<number>(plateDepthMm);
@@ -628,9 +630,21 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
 
           if (meta?.type === "support" && meta.supportId) {
             // Bridge 모드 → 기둥 위 hit point 를 새 endpoint 로.
+            // 기둥 표면 안쪽으로 normal × PEN 만큼 push → Bridge↔Bridge
+            // 연결 시 void 제거. PEN 은 기둥 반지름의 70% 이하 (양면
+            // 통과 방지). 굵기는 안 바뀌고 길이만 살짝 연장.
             if (bridge && info.pickInfo?.pickedPoint && meta.stlId) {
               const p = info.pickInfo.pickedPoint;
-              onAddSupportRef.current(meta.stlId, [p.x, p.y, p.z]);
+              const n = info.pickInfo.getNormal(true, true);
+              const radius = bridgeDiamRef.current * 0.5;
+              const PEN = Math.min(0.5, radius * 0.7);
+              const cx = n ? p.x - n.x * PEN : p.x;
+              const cy = n ? p.y - n.y * PEN : p.y;
+              const cz = n ? p.z - n.z * PEN : p.z;
+              const nArr: [number, number, number] | undefined = n
+                ? [n.x, n.y, n.z]
+                : undefined;
+              onAddSupportRef.current(meta.stlId, [cx, cy, cz], nArr);
               return;
             }
             // 그 외 → 선택.
