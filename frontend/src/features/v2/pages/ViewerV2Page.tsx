@@ -34,7 +34,11 @@ import PrinterProfileDialog from "../components/PrinterProfileDialog";
 import { useCurrentProfile } from "../hooks/usePrinterProfileStore";
 import { IDENTITY_TRANSFORM, type TransformV2 } from "../types/transform";
 import { transformPointBetween } from "../utils/transform";
-import { getBridgePathPoint } from "../utils/bridge-path";
+import {
+  getBridgePathPoint,
+  isStraightCps,
+  straightCps,
+} from "../utils/bridge-path";
 
 /**
  * v2 프로젝트 작업 화면.
@@ -408,22 +412,70 @@ const ViewerV2Page: React.FC = () => {
       );
       for (const child of children) {
         const updates: Parameters<typeof patchSupport>[1] = {};
-        if (child.contactAttachedTo?.supportId === parentId) {
-          updates.contact = getBridgePathPoint(
-            parentBase,
-            parentCps,
-            parentContact,
-            child.contactAttachedTo.t,
-          );
+        const newContact =
+          child.contactAttachedTo?.supportId === parentId
+            ? getBridgePathPoint(
+                parentBase,
+                parentCps,
+                parentContact,
+                child.contactAttachedTo.t,
+              )
+            : child.contact;
+        const newBase =
+          child.baseAttachedTo?.supportId === parentId
+            ? getBridgePathPoint(
+                parentBase,
+                parentCps,
+                parentContact,
+                child.baseAttachedTo.t,
+              )
+            : child.base;
+
+        if (newContact !== child.contact) updates.contact = newContact;
+        if (newBase !== child.base) updates.base = newBase;
+
+        // 변곡점 처리: 사용자가 child 를 직접 휘어놓지 않았다 (= 직선
+        // 상태) 면 새 base→contact 직선으로 reset. 사용자가 휘어놓은
+        // 곡선이면 끝점 비례 이동으로 모양 보존.
+        if (child.curveControlPoints) {
+          if (
+            isStraightCps(
+              child.base,
+              child.curveControlPoints,
+              child.contact,
+            )
+          ) {
+            updates.curveControlPoints = straightCps(newBase, newContact);
+          } else {
+            const dB: [number, number, number] = [
+              newBase[0] - child.base[0],
+              newBase[1] - child.base[1],
+              newBase[2] - child.base[2],
+            ];
+            const dC: [number, number, number] = [
+              newContact[0] - child.contact[0],
+              newContact[1] - child.contact[1],
+              newContact[2] - child.contact[2],
+            ];
+            const ts = [0.25, 0.5, 0.75];
+            const cps = child.curveControlPoints;
+            updates.curveControlPoints = ts.map(
+              (t, i): [number, number, number] => {
+                const w0 = 1 - t;
+                return [
+                  cps[i][0] + dB[0] * w0 + dC[0] * t,
+                  cps[i][1] + dB[1] * w0 + dC[1] * t,
+                  cps[i][2] + dB[2] * w0 + dC[2] * t,
+                ];
+              },
+            ) as [
+              [number, number, number],
+              [number, number, number],
+              [number, number, number],
+            ];
+          }
         }
-        if (child.baseAttachedTo?.supportId === parentId) {
-          updates.base = getBridgePathPoint(
-            parentBase,
-            parentCps,
-            parentContact,
-            child.baseAttachedTo.t,
-          );
-        }
+
         if (Object.keys(updates).length > 0) {
           await patchSupport(child.id, updates);
         }
@@ -734,9 +786,35 @@ const ViewerV2Page: React.FC = () => {
         newPatches.push({ id: sup.id, patch: newPatch });
       }
 
-      void Promise.all(
-        newPatches.map(({ id: sid, patch }) => patchSupport(sid, patch)),
-      );
+      // 부모 Bridge 의 새 path 정보 (follow 호출용).
+      type FollowInfo = {
+        parentId: string;
+        base: [number, number, number];
+        contact: [number, number, number];
+        cps?: CpsTriple;
+      };
+      const follows: FollowInfo[] = [];
+      for (let i = 0; i < affected.length; i++) {
+        const sup = affected[i];
+        if (sup.source !== "bridge") continue;
+        const p = newPatches[i].patch;
+        follows.push({
+          parentId: sup.id,
+          base: p.base,
+          contact: p.contact,
+          cps: p.curveControlPoints,
+        });
+      }
+
+      void (async () => {
+        await Promise.all(
+          newPatches.map(({ id: sid, patch }) => patchSupport(sid, patch)),
+        );
+        // 변환된 부모 Bridge 들의 새 path 로 부착된 child 들도 따라옴.
+        for (const f of follows) {
+          await followAttachedChildren(f.parentId, f.base, f.cps, f.contact);
+        }
+      })();
 
       // Undo entry: STL transform + 모든 영향 받은 서포트 복원/재적용.
       useUndoStore.getState().push({
@@ -755,7 +833,7 @@ const ViewerV2Page: React.FC = () => {
         },
       });
     },
-    [updateTransform, supports, patchSupport],
+    [updateTransform, supports, patchSupport, followAttachedChildren],
   );
 
   if (!projectId) {
