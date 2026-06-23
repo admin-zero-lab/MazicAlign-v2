@@ -35,8 +35,11 @@ import { useCurrentProfile } from "../hooks/usePrinterProfileStore";
 import { IDENTITY_TRANSFORM, type TransformV2 } from "../types/transform";
 import { transformPointBetween } from "../utils/transform";
 import {
+  findClosestT,
   getBridgePathPoint,
+  insertControlPoint,
   isStraightCps,
+  removeControlPoint,
   straightCps,
 } from "../utils/bridge-path";
 
@@ -82,6 +85,11 @@ const ViewerV2Page: React.FC = () => {
   const [selectedSupportId, setSelectedSupportId] = useState<string | null>(
     null,
   );
+  // 선택된 Bridge 변곡점 idx (sphere 클릭 시 설정). Delete 키로 제거.
+  const [selectedCp, setSelectedCp] = useState<{
+    supportId: string;
+    idx: number;
+  } | null>(null);
   const [autoBusy, setAutoBusy] = useState(false);
   const [slicePreview, setSlicePreview] = useState<{
     on: boolean;
@@ -459,22 +467,19 @@ const ViewerV2Page: React.FC = () => {
               newContact[1] - child.contact[1],
               newContact[2] - child.contact[2],
             ];
-            const ts = [0.25, 0.5, 0.75];
             const cps = child.curveControlPoints;
-            updates.curveControlPoints = ts.map(
-              (t, i): [number, number, number] => {
+            const n = cps.length;
+            updates.curveControlPoints = cps.map(
+              (cp, i): [number, number, number] => {
+                const t = (i + 1) / (n + 1);
                 const w0 = 1 - t;
                 return [
-                  cps[i][0] + dB[0] * w0 + dC[0] * t,
-                  cps[i][1] + dB[1] * w0 + dC[1] * t,
-                  cps[i][2] + dB[2] * w0 + dC[2] * t,
+                  cp[0] + dB[0] * w0 + dC[0] * t,
+                  cp[1] + dB[1] * w0 + dC[1] * t,
+                  cp[2] + dB[2] * w0 + dC[2] * t,
                 ];
               },
-            ) as [
-              [number, number, number],
-              [number, number, number],
-              [number, number, number],
-            ];
+            );
           }
         }
 
@@ -489,13 +494,14 @@ const ViewerV2Page: React.FC = () => {
   const handleMoveBridgeControlPoint = useCallback(
     async (
       supportId: string,
-      idx: 0 | 1 | 2,
+      idx: number,
       pos: [number, number, number],
     ) => {
       const target = supports.find((s) => s.id === supportId);
       if (!target || !target.curveControlPoints) return;
       const oldCps = target.curveControlPoints;
-      const newCps: typeof oldCps = [oldCps[0], oldCps[1], oldCps[2]];
+      if (idx < 0 || idx >= oldCps.length) return;
+      const newCps: typeof oldCps = oldCps.map((p) => [...p] as [number, number, number]);
       newCps[idx] = pos;
 
       // 자동 우회 호출 X — 사용자가 끈 위치를 그대로 보존.
@@ -555,16 +561,16 @@ const ViewerV2Page: React.FC = () => {
           newContact[1] - oldContact[1],
           newContact[2] - oldContact[2],
         ];
-        const ts = [0.25, 0.5, 0.75];
-        const shifted = ts.map((t, i): [number, number, number] => {
+        const n = oldCps.length;
+        newCps = oldCps.map((cp, i): [number, number, number] => {
+          const t = (i + 1) / (n + 1);
           const w0 = 1 - t;
           return [
-            oldCps[i][0] + dBase[0] * w0 + dContact[0] * t,
-            oldCps[i][1] + dBase[1] * w0 + dContact[1] * t,
-            oldCps[i][2] + dBase[2] * w0 + dContact[2] * t,
+            cp[0] + dBase[0] * w0 + dContact[0] * t,
+            cp[1] + dBase[1] * w0 + dContact[1] * t,
+            cp[2] + dBase[2] * w0 + dContact[2] * t,
           ];
         });
-        newCps = [shifted[0], shifted[1], shifted[2]];
 
         // 자동 우회 호출 X — 사용자가 끈 위치를 그대로 보존.
         // (끝점 이동 시 변곡점 모양은 비례 이동 결과 그대로 유지.)
@@ -596,10 +602,96 @@ const ViewerV2Page: React.FC = () => {
     [supports, patchSupport, followAttachedChildren],
   );
 
+  // Bridge tube 더블클릭 시 그 위치에 변곡점 추가.
+  const handleAddBridgeControlPoint = useCallback(
+    async (supportId: string, hitPoint: [number, number, number]) => {
+      const target = supports.find((s) => s.id === supportId);
+      if (!target || target.source !== "bridge") return;
+      const oldCps = target.curveControlPoints ?? [];
+      // hit point 의 t 비율 계산 후 그 위치에 삽입.
+      const t = findClosestT(
+        target.base,
+        oldCps.length > 0 ? oldCps : undefined,
+        target.contact,
+        hitPoint,
+      );
+      const newCps = insertControlPoint(
+        target.base,
+        oldCps.length > 0 ? oldCps : undefined,
+        target.contact,
+        t,
+      );
+      await patchSupport(supportId, { curveControlPoints: newCps });
+      await followAttachedChildren(
+        supportId,
+        target.base,
+        newCps,
+        target.contact,
+      );
+      useUndoStore.getState().push({
+        label: "add-bridge-cp",
+        undo: async () => {
+          if (oldCps.length === 0) {
+            await patchSupport(supportId, { curveControlPoints: [] });
+          } else {
+            await patchSupport(supportId, { curveControlPoints: oldCps });
+          }
+        },
+        redo: async () => {
+          await patchSupport(supportId, { curveControlPoints: newCps });
+        },
+      });
+    },
+    [supports, patchSupport, followAttachedChildren],
+  );
+
+  // 선택된 변곡점 제거 (Delete 키).
+  const handleRemoveBridgeControlPoint = useCallback(
+    async (supportId: string, idx: number) => {
+      const target = supports.find((s) => s.id === supportId);
+      if (!target || target.source !== "bridge" || !target.curveControlPoints) {
+        return;
+      }
+      const oldCps = target.curveControlPoints;
+      if (idx < 0 || idx >= oldCps.length) return;
+      const newCps = removeControlPoint(oldCps, idx);
+      await patchSupport(supportId, { curveControlPoints: newCps });
+      await followAttachedChildren(
+        supportId,
+        target.base,
+        newCps,
+        target.contact,
+      );
+      setSelectedCp(null);
+      useUndoStore.getState().push({
+        label: "remove-bridge-cp",
+        undo: async () => {
+          await patchSupport(supportId, { curveControlPoints: oldCps });
+        },
+        redo: async () => {
+          await patchSupport(supportId, { curveControlPoints: newCps });
+        },
+      });
+    },
+    [supports, patchSupport, followAttachedChildren],
+  );
+
   const handleDeleteSelectedSupport = useCallback(() => {
-    if (editMode !== "support" || !selectedSupportId) return;
+    if (editMode !== "support") return;
+    // 변곡점이 선택돼 있으면 그것 우선 제거.
+    if (selectedCp) {
+      void handleRemoveBridgeControlPoint(selectedCp.supportId, selectedCp.idx);
+      return;
+    }
+    if (!selectedSupportId) return;
     void handleRemoveSupport(selectedSupportId);
-  }, [editMode, selectedSupportId, handleRemoveSupport]);
+  }, [
+    editMode,
+    selectedSupportId,
+    selectedCp,
+    handleRemoveSupport,
+    handleRemoveBridgeControlPoint,
+  ]);
 
   // 선택된 Bridge 의 변곡점 3 개를 base→contact 직선상 균등 분할
   // 위치로 reset. 사용자가 휘어놓은 곡선을 한 번에 직선으로 복원.
@@ -610,17 +702,8 @@ const ViewerV2Page: React.FC = () => {
       return;
     }
     const oldCps = target.curveControlPoints;
-    const newCps = straightCps(target.base, target.contact);
-    if (
-      newCps[0][0] === oldCps[0][0] &&
-      newCps[0][1] === oldCps[0][1] &&
-      newCps[0][2] === oldCps[0][2] &&
-      newCps[2][0] === oldCps[2][0] &&
-      newCps[2][1] === oldCps[2][1] &&
-      newCps[2][2] === oldCps[2][2]
-    ) {
-      return; // 이미 직선 — no-op
-    }
+    // 기존 개수 유지하여 직선 reset (cps 길이 보존).
+    const newCps = straightCps(target.base, target.contact, oldCps.length);
     await patchSupport(selectedSupportId, { curveControlPoints: newCps });
     // attached child 도 follow.
     await followAttachedChildren(
@@ -758,15 +841,11 @@ const ViewerV2Page: React.FC = () => {
         (s) => s.stlId === id || s.baseStlId === id,
       );
 
-      type CpsTriple = [
-        [number, number, number],
-        [number, number, number],
-        [number, number, number],
-      ];
+      type CpsArr = [number, number, number][];
       type SupportPatch = {
         contact: [number, number, number];
         base: [number, number, number];
-        curveControlPoints?: CpsTriple;
+        curveControlPoints?: CpsArr;
       };
       const oldStates: { id: string; patch: SupportPatch }[] = [];
       const newPatches: { id: string; patch: SupportPatch }[] = [];
@@ -785,12 +864,10 @@ const ViewerV2Page: React.FC = () => {
           ? transformPointBetween(sup.base, start, end)
           : sup.base;
 
-        let newCps: CpsTriple | undefined = sup.curveControlPoints
-          ? [
-              sup.curveControlPoints[0],
-              sup.curveControlPoints[1],
-              sup.curveControlPoints[2],
-            ]
+        let newCps: CpsArr | undefined = sup.curveControlPoints
+          ? sup.curveControlPoints.map(
+              (p) => [...p] as [number, number, number],
+            )
           : undefined;
 
         if (isBridge && sup.curveControlPoints) {
@@ -804,16 +881,17 @@ const ViewerV2Page: React.FC = () => {
             newBase[1] - sup.base[1],
             newBase[2] - sup.base[2],
           ];
-          const ts = [0.25, 0.5, 0.75];
           const cps = sup.curveControlPoints;
-          newCps = ts.map((t, i): [number, number, number] => {
+          const nn = cps.length;
+          newCps = cps.map((cp, i): [number, number, number] => {
+            const t = (i + 1) / (nn + 1);
             const w0 = 1 - t;
             return [
-              cps[i][0] + dB[0] * w0 + dC[0] * t,
-              cps[i][1] + dB[1] * w0 + dC[1] * t,
-              cps[i][2] + dB[2] * w0 + dC[2] * t,
+              cp[0] + dB[0] * w0 + dC[0] * t,
+              cp[1] + dB[1] * w0 + dC[1] * t,
+              cp[2] + dB[2] * w0 + dC[2] * t,
             ];
-          }) as CpsTriple;
+          });
         }
 
         const oldPatch: SupportPatch = {
@@ -838,7 +916,7 @@ const ViewerV2Page: React.FC = () => {
         parentId: string;
         base: [number, number, number];
         contact: [number, number, number];
-        cps?: CpsTriple;
+        cps?: CpsArr;
       };
       const follows: FollowInfo[] = [];
       for (let i = 0; i < affected.length; i++) {
@@ -1012,6 +1090,12 @@ const ViewerV2Page: React.FC = () => {
               setSelectedIds(new Set([id]));
               setGizmoMode("rotate");
             }}
+            onDoublePickBridgeTube={(supportId, hit) =>
+              void handleAddBridgeControlPoint(supportId, hit)
+            }
+            onSelectBridgeControlPoint={(supportId, idx) =>
+              setSelectedCp({ supportId, idx })
+            }
             alignFloorMode={alignFloorMode}
             onAlignFaceToFloor={(id, newT) => {
               const f = files.find((file) => file.id === id);
@@ -1055,6 +1139,7 @@ const ViewerV2Page: React.FC = () => {
               mode={editMode}
               onChange={(m) => {
                 setEditMode(m);
+                setSelectedCp(null);
                 if (m === "select") {
                   setSelectedSupportId(null);
                   setBridgeMode(false);

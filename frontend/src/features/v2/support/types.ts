@@ -80,11 +80,7 @@ export interface SupportPointV2 {
    *
    * source !== 'bridge' 인 점에서는 무시된다.
    */
-  curveControlPoints?: [
-    [number, number, number],
-    [number, number, number],
-    [number, number, number],
-  ];
+  curveControlPoints?: [number, number, number][];
   /**
    * Contact 위치의 표면 normal (모델 외부 방향, 단위 벡터).
    * 옵셔널 — 옛 데이터는 undefined. 시각화 sphere 를 표면 밖으로

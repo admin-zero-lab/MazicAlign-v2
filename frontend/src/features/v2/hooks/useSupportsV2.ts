@@ -65,11 +65,7 @@ export function useSupportsV2(projectId: string | undefined) {
       patch: Partial<{
         contact: [number, number, number];
         base: [number, number, number];
-        curveControlPoints: [
-          [number, number, number],
-          [number, number, number],
-          [number, number, number],
-        ];
+        curveControlPoints: [number, number, number][];
       }>,
     ) => {
       await repo.updateSupport(id, patch);

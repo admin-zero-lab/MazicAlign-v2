@@ -140,12 +140,11 @@ interface BabylonSceneProps {
   sliceY: number | null;
   /**
    * Bridge 곡선의 변곡점을 사용자가 드래그해서 옮겼을 때 호출.
-   * idx 는 [0, 1, 2] — base → contact 방향으로 첫 번째 / 가운데 / 세 번째
-   * 변곡점. 새 좌표는 world 기준 [x, y, z].
+   * idx 는 base → contact 방향 순서 (0..n-1). n 은 가변.
    */
   onMoveBridgeControlPoint: (
     supportId: string,
-    idx: 0 | 1 | 2,
+    idx: number,
     pos: [number, number, number],
   ) => void;
   /**
@@ -160,6 +159,16 @@ interface BabylonSceneProps {
   ) => void;
   /** STL 메쉬 더블 클릭 (= select 모드에서 회전 모드 활성화 신호). */
   onDoublePickStl?: (id: string) => void;
+  /** Bridge tube 더블 클릭 — 그 위치 (world 좌표) 에 변곡점 추가. */
+  onDoublePickBridgeTube?: (
+    supportId: string,
+    hitPoint: [number, number, number],
+  ) => void;
+  /** Bridge 변곡점 sphere 가 선택됐을 때 (단일 클릭). Delete 키 처리용. */
+  onSelectBridgeControlPoint?: (
+    supportId: string,
+    idx: number,
+  ) => void;
   /**
    * '바닥면 붙이기' sub-mode 활성 여부. true 면 STL face 클릭 시
    * onAlignFaceToFloor 호출 — 그 face 의 world normal 이 -Y 가 되게
@@ -272,6 +281,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       onMoveBridgeControlPoint,
       onMoveBridgeEndpoint,
       onDoublePickStl,
+      onDoublePickBridgeTube,
+      onSelectBridgeControlPoint,
       alignFloorMode,
       onAlignFaceToFloor,
       className = "",
@@ -347,6 +358,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     onMoveBridgeEndpointRef.current = onMoveBridgeEndpoint;
     const onDoublePickStlRef = useRef(onDoublePickStl);
     onDoublePickStlRef.current = onDoublePickStl;
+    const onDoublePickBridgeTubeRef = useRef(onDoublePickBridgeTube);
+    onDoublePickBridgeTubeRef.current = onDoublePickBridgeTube;
+    const onSelectBridgeControlPointRef = useRef(onSelectBridgeControlPoint);
+    onSelectBridgeControlPointRef.current = onSelectBridgeControlPoint;
     const alignFloorModeRef = useRef<boolean>(!!alignFloorMode);
     alignFloorModeRef.current = !!alignFloorMode;
     const onAlignFaceToFloorRef = useRef(onAlignFaceToFloor);
@@ -625,13 +640,34 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       rotationGizmoRef.current = rotationGizmo;
       scaleGizmoRef.current = scaleGizmo;
 
-      // 더블 클릭: STL 메쉬면 회전 모드 활성화 신호.
+      // 더블 클릭:
+      //   · STL mesh (select 모드)         → 회전 모드 활성화 신호
+      //   · Bridge tube (support 모드)     → 그 위치에 변곡점 추가
       scene.onPointerObservable.add((info) => {
         if (info.type !== PointerEventTypes.POINTERDOUBLETAP) return;
         const evt = info.event as PointerEvent;
         if (evt.button !== 0) return;
         const picked = info.pickInfo?.pickedMesh;
         if (!picked) return;
+
+        // Bridge tube?
+        const meta = (
+          picked as {
+            metadata?: { type?: string; supportId?: string };
+          }
+        ).metadata;
+        if (
+          editModeRef.current === "support" &&
+          meta?.type === "support" &&
+          meta.supportId &&
+          info.pickInfo?.pickedPoint
+        ) {
+          const p = info.pickInfo.pickedPoint;
+          onDoublePickBridgeTubeRef.current?.(meta.supportId, [p.x, p.y, p.z]);
+          return;
+        }
+
+        // STL mesh?
         if (editModeRef.current !== "select") return;
         for (const [id, mesh] of meshMapRef.current) {
           if (mesh === picked) {
@@ -667,9 +703,23 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
                 type?: string;
                 supportId?: string;
                 stlId?: string;
+                cpIdx?: number;
               };
             }
           ).metadata;
+
+          // 변곡점 sphere 단일 클릭 → 선택 (Delete 키로 제거).
+          if (
+            meta?.type === "bridge-cp" &&
+            meta.supportId &&
+            typeof meta.cpIdx === "number"
+          ) {
+            onSelectBridgeControlPointRef.current?.(
+              meta.supportId,
+              meta.cpIdx,
+            );
+            return;
+          }
 
           if (meta?.type === "support" && meta.supportId) {
             // Bridge 모드 → 기둥 위 hit point 를 새 endpoint 로.
@@ -1185,7 +1235,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       }
 
       if (sup.curveControlPoints) {
-        for (let i = 0; i < 3; i++) {
+        for (let i = 0; i < sup.curveControlPoints.length; i++) {
           const cp = sup.curveControlPoints[i];
           const sphere = MeshBuilder.CreateSphere(
             `v2_bridge_cp_${sup.id}_${i}`,
@@ -1196,10 +1246,15 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           sphere.material = cpMat;
           sphere.isPickable = true;
           sphere.renderingGroupId = 1;
+          sphere.metadata = {
+            type: "bridge-cp",
+            supportId: sup.id,
+            cpIdx: i,
+          };
           const drag = new PointerDragBehavior();
           drag.useObjectOrientationForDragging = false;
           sphere.addBehavior(drag);
-          const idx = i as 0 | 1 | 2;
+          const idx = i;
           drag.onDragEndObservable.add(() => {
             onMoveBridgeCpRef.current(sup.id, idx, [
               sphere.position.x,

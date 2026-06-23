@@ -135,13 +135,15 @@ function createBridgeCurveTube(
   material: StandardMaterial,
 ): Mesh {
   const cps = point.curveControlPoints!;
-  const passPoints = [
+  const passPoints: Vector3[] = [
     new Vector3(point.base[0], point.base[1], point.base[2]),
-    new Vector3(cps[0][0], cps[0][1], cps[0][2]),
-    new Vector3(cps[1][0], cps[1][1], cps[1][2]),
-    new Vector3(cps[2][0], cps[2][1], cps[2][2]),
-    new Vector3(point.contact[0], point.contact[1], point.contact[2]),
   ];
+  for (const cp of cps) {
+    passPoints.push(new Vector3(cp[0], cp[1], cp[2]));
+  }
+  passPoints.push(
+    new Vector3(point.contact[0], point.contact[1], point.contact[2]),
+  );
 
   // 각 segment 사이 보간 점 수. 곡률에 따라 24 ~ 32 가 무난.
   const path = Curve3.CreateCatmullRomSpline(passPoints, 24, false).getPoints();
