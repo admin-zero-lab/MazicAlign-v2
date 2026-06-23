@@ -641,10 +641,11 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
               const p = info.pickInfo.pickedPoint;
               const n = info.pickInfo.getNormal(true, true);
               const radius = bridgeDiamRef.current * 0.5;
-              // PEN = 반지름의 95% 까지 → cap 가장자리가 거의 axis
-              // 까지 들어가 노출 edge 가 사라진다. (양면 통과는 95%
-              // 라 아슬아슬한 안전.)
-              const PEN = radius * 0.95;
+              // PEN = 반지름의 120% → cap 평면이 부모 axis 를 넘어가서
+              // cap 가장자리 (반지름 = child radius) 가 부모 cylinder
+              // cross-section 안에 완전히 박힌다. 굵기 균일 유지,
+              // 외형 벗어남 0. (양면 통과는 PEN < 2×radius 라 안전.)
+              const PEN = radius * 1.2;
               const cx = n ? p.x - n.x * PEN : p.x;
               const cy = n ? p.y - n.y * PEN : p.y;
               const cz = n ? p.z - n.z * PEN : p.z;
