@@ -148,11 +148,28 @@ function createBridgeCurveTube(
 
   const radius = params.bridgeDiameterMm * 0.5;
 
+  // 양 끝 TAPER mm 구간을 점 (반지름 0) 으로 좁혀 cap 가장자리를
+  // 없앤다. 어떤 굵기에도 child Bridge 의 끝이 타겟 형상의 외형을
+  // 벗어나지 않게 된다 (점은 부피가 없으므로 항상 내부에 박힘).
+  const TAPER = 1.0;
+  let totalLength = 0;
+  for (let i = 0; i < path.length - 1; i++) {
+    totalLength += Vector3.Distance(path[i], path[i + 1]);
+  }
+  const radiusFn = (_i: number, distance: number): number => {
+    if (distance < TAPER) return (radius * distance) / TAPER;
+    if (distance > totalLength - TAPER) {
+      return (radius * (totalLength - distance)) / TAPER;
+    }
+    return radius;
+  };
+
   const m = MeshBuilder.CreateTube(
     `support_${point.id}`,
     {
       path,
       radius,
+      radiusFunction: radiusFn,
       tessellation: 12,
       cap: Mesh.CAP_ALL,
       sideOrientation: Mesh.DEFAULTSIDE,
