@@ -1016,6 +1016,9 @@ const ViewerV2Page: React.FC = () => {
             onAlignFaceToFloor={(id, newT) => {
               const f = files.find((file) => file.id === id);
               const oldT = f?.transform ?? IDENTITY_TRANSFORM;
+              // mesh 에 즉시 반영 (handleCommitTransform 은 preview
+              // 가정이라 mesh 직접 안 움직임).
+              sceneHandleRef.current?.previewTransform(id, newT);
               handleCommitTransform(id, oldT, newT);
               setAlignFloorMode(false); // 한 번 사용 후 자동 OFF
             }}
