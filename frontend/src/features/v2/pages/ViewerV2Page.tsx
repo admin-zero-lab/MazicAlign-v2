@@ -68,7 +68,8 @@ const ViewerV2Page: React.FC = () => {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const [gizmoMode, setGizmoMode] = useState<GizmoMode>("none");
+  // 기본 translate — STL 단일 선택 시 자동으로 X/Y/Z 이동 화살표 표시.
+  const [gizmoMode, setGizmoMode] = useState<GizmoMode>("translate");
   const [editMode, setEditMode] = useState<EditMode>("select");
   const [bridgeMode, setBridgeMode] = useState(false);
   const [pendingBridge, setPendingBridge] = useState<{
