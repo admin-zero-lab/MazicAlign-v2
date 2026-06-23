@@ -599,6 +599,51 @@ const ViewerV2Page: React.FC = () => {
     void handleRemoveSupport(selectedSupportId);
   }, [editMode, selectedSupportId, handleRemoveSupport]);
 
+  // 선택된 Bridge 의 변곡점 3 개를 base→contact 직선상 균등 분할
+  // 위치로 reset. 사용자가 휘어놓은 곡선을 한 번에 직선으로 복원.
+  const handleResetBridgeCurve = useCallback(async () => {
+    if (!selectedSupportId) return;
+    const target = supports.find((s) => s.id === selectedSupportId);
+    if (!target || target.source !== "bridge" || !target.curveControlPoints) {
+      return;
+    }
+    const oldCps = target.curveControlPoints;
+    const newCps = straightCps(target.base, target.contact);
+    if (
+      newCps[0][0] === oldCps[0][0] &&
+      newCps[0][1] === oldCps[0][1] &&
+      newCps[0][2] === oldCps[0][2] &&
+      newCps[2][0] === oldCps[2][0] &&
+      newCps[2][1] === oldCps[2][1] &&
+      newCps[2][2] === oldCps[2][2]
+    ) {
+      return; // 이미 직선 — no-op
+    }
+    await patchSupport(selectedSupportId, { curveControlPoints: newCps });
+    // attached child 도 follow.
+    await followAttachedChildren(
+      selectedSupportId,
+      target.base,
+      newCps,
+      target.contact,
+    );
+
+    useUndoStore.getState().push({
+      label: "reset-bridge-curve",
+      undo: async () => {
+        await patchSupport(selectedSupportId, { curveControlPoints: oldCps });
+      },
+      redo: async () => {
+        await patchSupport(selectedSupportId, { curveControlPoints: newCps });
+      },
+    });
+  }, [
+    selectedSupportId,
+    supports,
+    patchSupport,
+    followAttachedChildren,
+  ]);
+
   useShortcutHandler("delete", handleDeleteSelectedSupport);
 
   // ----- 마스크 ZIP 내보내기 -----
@@ -1015,6 +1060,19 @@ const ViewerV2Page: React.FC = () => {
                 }`}
               >
                 Bridge
+              </button>
+              <button
+                onClick={() => void handleResetBridgeCurve()}
+                disabled={
+                  !selectedSupportId ||
+                  bridgeMode ||
+                  supports.find((s) => s.id === selectedSupportId)?.source !==
+                    "bridge"
+                }
+                className="px-2 py-0.5 text-xs border border-gray-400 text-gray-700 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                title="선택된 Bridge 의 변곡점을 직선 균등 분할로 복원"
+              >
+                직선 복원
               </button>
               <button
                 onClick={handleDeleteSelectedSupport}
