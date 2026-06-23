@@ -11,7 +11,7 @@ interface Props {
 }
 
 const OWNER = "admin-zero-lab";
-const REPO = "MazicAlign";
+const REPO = "MazicAlign-v2";
 
 /**
  * 사용자 PC 보안 프로그램이 디스크 다운로드를 잠그는 환경 우회.
