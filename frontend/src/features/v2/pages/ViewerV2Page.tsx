@@ -29,6 +29,7 @@ import EditModeControls, {
   type EditMode,
 } from "../components/EditModeControls";
 import SliceSidePanel from "../components/SliceSidePanel";
+import GithubUploadDialog from "../components/GithubUploadDialog";
 import PrinterProfileSelect from "../components/PrinterProfileSelect";
 import PrinterProfileDialog from "../components/PrinterProfileDialog";
 import { useCurrentProfile } from "../hooks/usePrinterProfileStore";
@@ -68,6 +69,7 @@ const ViewerV2Page: React.FC = () => {
   } = useSupportsV2(projectId);
 
   const [browserOpen, setBrowserOpen] = useState(false);
+  const [ghOpen, setGhOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -1044,6 +1046,14 @@ const ViewerV2Page: React.FC = () => {
               STL 내보내기
             </button>
             <button
+              onClick={() => setGhOpen(true)}
+              disabled={files.length === 0}
+              className="px-3 py-1 text-sm text-primary-700 border border-primary-600 rounded hover:bg-primary-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              title="STL + 서포트를 admin-zero-lab/MazicAlign 으로 직접 업로드 (디스크 X)"
+            >
+              GitHub 업로드
+            </button>
+            <button
               onClick={() => setBrowserOpen(true)}
               className="px-3 py-1 text-sm bg-primary-600 text-white rounded hover:bg-primary-700 transition-colors"
             >
@@ -1285,6 +1295,15 @@ const ViewerV2Page: React.FC = () => {
             </div>
           </div>
         </main>
+
+        <GithubUploadDialog
+          open={ghOpen}
+          defaultFileName={`${(project?.name ?? "project").replace(/[\\/:*?"<>|]/g, "_")}${
+            supports.length > 0 ? "_supported" : ""
+          }.stl`}
+          getBlob={() => sceneHandleRef.current?.exportStl() ?? null}
+          onClose={() => setGhOpen(false)}
+        />
 
         {slicePreview.on && (
           <SliceSidePanel
