@@ -1032,6 +1032,34 @@ const ViewerV2Page: React.FC = () => {
             }}
           />
 
+          {selectedIds.size === 1 &&
+            editMode === "select" &&
+            (() => {
+              const id = Array.from(selectedIds)[0];
+              const f = files.find((file) => file.id === id);
+              if (!f) return null;
+              const t = f.transform ?? IDENTITY_TRANSFORM;
+              return (
+                <div className="absolute top-3 left-3 bg-white/90 backdrop-blur rounded-md shadow px-3 py-2 text-xs font-mono text-gray-700 pointer-events-none">
+                  <div className="text-[10px] text-gray-500 mb-0.5 font-sans">
+                    {f.fileName}
+                  </div>
+                  <div>
+                    <span className="text-red-500">X</span>{" "}
+                    {t.tx.toFixed(2)} mm
+                  </div>
+                  <div>
+                    <span className="text-green-600">Y</span>{" "}
+                    {t.ty.toFixed(2)} mm
+                  </div>
+                  <div>
+                    <span className="text-blue-500">Z</span>{" "}
+                    {t.tz.toFixed(2)} mm
+                  </div>
+                </div>
+              );
+            })()}
+
           {editMode === "support" && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-white/95 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-700">
               {bridgeMode ? (
