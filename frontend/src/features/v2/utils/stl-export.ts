@@ -29,9 +29,12 @@ export function meshesToStlBlob(meshes: Mesh[]): Blob {
     const world = mesh.getWorldMatrix();
 
     for (let i = 0; i < indices.length; i += 3) {
+      // Babylon (left-handed, CW=front) → STL (right-handed, CCW=front)
+      // → 두 vertex swap 으로 winding 뒤집기. 그래야 외부 슬라이서가
+      //   face normal 을 올바른 외부 방향으로 인식.
       const i0 = indices[i] * 3;
-      const i1 = indices[i + 1] * 3;
-      const i2 = indices[i + 2] * 3;
+      const i1 = indices[i + 2] * 3;
+      const i2 = indices[i + 1] * 3;
 
       const local0 = new Vector3(positions[i0], positions[i0 + 1], positions[i0 + 2]);
       const local1 = new Vector3(positions[i1], positions[i1 + 1], positions[i1 + 2]);
