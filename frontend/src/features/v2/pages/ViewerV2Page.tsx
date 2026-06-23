@@ -34,6 +34,7 @@ import PrinterProfileDialog from "../components/PrinterProfileDialog";
 import { useCurrentProfile } from "../hooks/usePrinterProfileStore";
 import { IDENTITY_TRANSFORM, type TransformV2 } from "../types/transform";
 import { transformPointBetween } from "../utils/transform";
+import { getBridgePathPoint } from "../utils/bridge-path";
 
 /**
  * v2 프로젝트 작업 화면.
@@ -70,6 +71,7 @@ const ViewerV2Page: React.FC = () => {
     stlId: string;
     contact: [number, number, number];
     normal?: [number, number, number];
+    attachedTo?: { supportId: string; t: number };
   } | null>(null);
   const [selectedSupportId, setSelectedSupportId] = useState<string | null>(
     null,
@@ -225,6 +227,7 @@ const ViewerV2Page: React.FC = () => {
       stlId: string,
       contact: [number, number, number],
       normal?: [number, number, number],
+      attachedTo?: { supportId: string; t: number },
     ) => {
       if (!projectId) return;
 
@@ -233,7 +236,7 @@ const ViewerV2Page: React.FC = () => {
         if (!pendingBridge) {
           // 첫 점 — pending 설정 (선택 해제 X).
           if (contact[1] <= 0.5) return; // 베드 근처 무의미
-          setPendingBridge({ stlId, contact, normal });
+          setPendingBridge({ stlId, contact, normal, attachedTo });
           return;
         }
         // 두 번째 점 — 두 점을 잇는 bridge 서포트 추가.
@@ -274,6 +277,8 @@ const ViewerV2Page: React.FC = () => {
           curveControlPoints: initialCps,
           contactNormal: normal,
           baseNormal: pendingBridge.normal,
+          contactAttachedTo: attachedTo,
+          baseAttachedTo: pendingBridge.attachedTo,
         };
         setPendingBridge(null);
         await addSupports([newPoint]);
@@ -381,6 +386,52 @@ const ViewerV2Page: React.FC = () => {
     [supports, patchSupport],
   );
 
+  // 부모 Bridge 가 수정된 직후 그 위에 부착된 child Bridge 들의
+  // contact/base 를 새 path 의 t 위치 좌표로 다시 계산해서 따라가게.
+  const followAttachedChildren = useCallback(
+    async (
+      parentId: string,
+      parentBase: [number, number, number],
+      parentCps:
+        | [
+            [number, number, number],
+            [number, number, number],
+            [number, number, number],
+          ]
+        | undefined,
+      parentContact: [number, number, number],
+    ) => {
+      const children = supports.filter(
+        (s) =>
+          s.contactAttachedTo?.supportId === parentId ||
+          s.baseAttachedTo?.supportId === parentId,
+      );
+      for (const child of children) {
+        const updates: Parameters<typeof patchSupport>[1] = {};
+        if (child.contactAttachedTo?.supportId === parentId) {
+          updates.contact = getBridgePathPoint(
+            parentBase,
+            parentCps,
+            parentContact,
+            child.contactAttachedTo.t,
+          );
+        }
+        if (child.baseAttachedTo?.supportId === parentId) {
+          updates.base = getBridgePathPoint(
+            parentBase,
+            parentCps,
+            parentContact,
+            child.baseAttachedTo.t,
+          );
+        }
+        if (Object.keys(updates).length > 0) {
+          await patchSupport(child.id, updates);
+        }
+      }
+    },
+    [supports, patchSupport],
+  );
+
   const handleMoveBridgeControlPoint = useCallback(
     async (
       supportId: string,
@@ -397,6 +448,12 @@ const ViewerV2Page: React.FC = () => {
       // 모델 안 침투 시 사용자가 직접 변곡점을 다시 조정한다.
 
       await patchSupport(supportId, { curveControlPoints: newCps });
+      await followAttachedChildren(
+        supportId,
+        target.base,
+        newCps,
+        target.contact,
+      );
 
       useUndoStore.getState().push({
         label: "move-bridge-cp",
@@ -408,7 +465,7 @@ const ViewerV2Page: React.FC = () => {
         },
       });
     },
-    [supports, patchSupport],
+    [supports, patchSupport, followAttachedChildren],
   );
 
   const handleMoveBridgeEndpoint = useCallback(
@@ -465,6 +522,7 @@ const ViewerV2Page: React.FC = () => {
       };
       if (newCps) patch.curveControlPoints = newCps;
       await patchSupport(supportId, patch);
+      await followAttachedChildren(supportId, newBase, newCps, newContact);
 
       useUndoStore.getState().push({
         label: "move-bridge-endpoint",
@@ -481,7 +539,7 @@ const ViewerV2Page: React.FC = () => {
         },
       });
     },
-    [supports, patchSupport],
+    [supports, patchSupport, followAttachedChildren],
   );
 
   const handleDeleteSelectedSupport = useCallback(() => {

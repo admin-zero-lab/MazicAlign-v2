@@ -94,4 +94,14 @@ export interface SupportPointV2 {
   contactNormal?: [number, number, number];
   /** Base 위치 normal (Bridge 전용). undefined 면 (0, 1, 0). */
   baseNormal?: [number, number, number];
+  /**
+   * Contact 가 다른 Bridge 표면 위에 부착된 경우 그 부착 정보.
+   *   · supportId : 부착된 부모 Bridge id
+   *   · t         : 부모 Bridge path 위의 비율 (0 = base, 1 = contact)
+   * 부모 Bridge 가 수정되면 이 t 위치를 다시 계산해서 contact 가
+   * 부모를 따라 이동한다.
+   */
+  contactAttachedTo?: { supportId: string; t: number };
+  /** Base 가 다른 Bridge 표면 위에 부착된 경우. */
+  baseAttachedTo?: { supportId: string; t: number };
 }

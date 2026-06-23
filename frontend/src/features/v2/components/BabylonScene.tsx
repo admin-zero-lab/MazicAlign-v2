@@ -30,6 +30,7 @@ import {
 import { loadStlIntoScene } from "../utils/stl-loader";
 import { applyOverhangColors } from "../utils/overhang";
 import { applyTransformToMesh, readMeshTransform } from "../utils/transform";
+import { findClosestT } from "../utils/bridge-path";
 import { IDENTITY_TRANSFORM, type TransformV2 } from "../types/transform";
 import {
   createSupportMaterial,
@@ -94,11 +95,14 @@ interface BabylonSceneProps {
   editMode: EditMode;
   /** 'support' 모드에서 모델 표면 픽 시 → 그 위치에 서포트 추가.
    *  contact 는 표면 안쪽으로 push 된 좌표. normal 은 표면 외부
-   *  방향 단위 벡터 (옵셔널 — 기둥 위 클릭 등 normal 없는 경우). */
+   *  방향 단위 벡터 (옵셔널 — 기둥 위 클릭 등 normal 없는 경우).
+   *  attachedTo 는 클릭이 다른 Bridge 기둥 위면 그 부모 Bridge id 와
+   *  path 위 t 비율 (Bridge↔Bridge follow). */
   onAddSupportAt: (
     stlId: string,
     contact: [number, number, number],
     normal?: [number, number, number],
+    attachedTo?: { supportId: string; t: number },
   ) => void;
   /**
    * 'support' 모드에서 기둥 픽 시 선택, 빈 공간 픽 시 null.
@@ -637,14 +641,39 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
               const p = info.pickInfo.pickedPoint;
               const n = info.pickInfo.getNormal(true, true);
               const radius = bridgeDiamRef.current * 0.5;
-              const PEN = Math.min(0.5, radius * 0.7);
+              // PEN = 반지름의 95% 까지 → cap 가장자리가 거의 axis
+              // 까지 들어가 노출 edge 가 사라진다. (양면 통과는 95%
+              // 라 아슬아슬한 안전.)
+              const PEN = radius * 0.95;
               const cx = n ? p.x - n.x * PEN : p.x;
               const cy = n ? p.y - n.y * PEN : p.y;
               const cz = n ? p.z - n.z * PEN : p.z;
               const nArr: [number, number, number] | undefined = n
                 ? [n.x, n.y, n.z]
                 : undefined;
-              onAddSupportRef.current(meta.stlId, [cx, cy, cz], nArr);
+              // attachedTo: 부모 Bridge path 위의 t 비율. 부모가
+              // 수정되면 child 가 따라 이동.
+              const parent = supportsRef.current.find(
+                (s) => s.id === meta.supportId,
+              );
+              let attachedTo:
+                | { supportId: string; t: number }
+                | undefined;
+              if (parent && parent.source === "bridge") {
+                const t = findClosestT(
+                  parent.base,
+                  parent.curveControlPoints,
+                  parent.contact,
+                  [p.x, p.y, p.z],
+                );
+                attachedTo = { supportId: meta.supportId, t };
+              }
+              onAddSupportRef.current(
+                meta.stlId,
+                [cx, cy, cz],
+                nArr,
+                attachedTo,
+              );
               return;
             }
             // 그 외 → 선택.
