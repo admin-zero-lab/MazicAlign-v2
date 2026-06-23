@@ -52,6 +52,11 @@ export async function loadStlIntoScene(
   mesh.rotation.x = -Math.PI / 2;
   mesh.bakeCurrentTransformIntoVertices();
 
+  // 1.5) auto-orient: 이미 Y-up 으로 export 된 STL 은 위 회전으로
+  //      옆으로 누운 상태가 된다. AABB 분석으로 가장 긴 축이 Y 가
+  //      아니면 추가 회전. 1.5× 임계로 대칭 모델 (cube 등) 보호.
+  autoOrientUpright(mesh);
+
   // 2) 빌드플레이트에 정렬 (XZ center, Y base=liftMm).
   alignMeshToPlate(mesh, liftMm);
 
@@ -66,6 +71,35 @@ export async function loadStlIntoScene(
   mesh.material = mat;
 
   return mesh;
+}
+
+/**
+ * AABB 분석으로 가장 긴 축이 Y 가 되게 추가 회전.
+ *
+ * Z-up 가정의 X 축 -90° 회전 후, 이미 Y-up 으로 export 된 STL 은
+ * 옆으로 누워있다 (cylinder.STL 등). 가장 긴 축 (= 출력 방향 추정)
+ * 이 Y 가 아니면 그 축을 Y 로 돌린다.
+ *
+ * 임계 RATIO = 1.5 — 가장 긴 축이 Y 보다 1.5× 이상 길어야 회전.
+ * cube / 거의 등방인 모델은 그대로 둠 (사용자 의도 보호).
+ */
+function autoOrientUpright(mesh: Mesh): void {
+  mesh.refreshBoundingInfo();
+  const bb = mesh.getBoundingInfo().boundingBox;
+  const dx = bb.maximum.x - bb.minimum.x;
+  const dy = bb.maximum.y - bb.minimum.y;
+  const dz = bb.maximum.z - bb.minimum.z;
+  const RATIO = 1.5;
+
+  if (dx > dy * RATIO && dx >= dz) {
+    // X 가 가장 길다 → Z 축 -90° 회전 → X 가 Y 가 됨.
+    mesh.rotation.z = -Math.PI / 2;
+    mesh.bakeCurrentTransformIntoVertices();
+  } else if (dz > dy * RATIO && dz > dx) {
+    // Z 가 가장 길다 → X 축 +90° 회전 → Z 가 Y 가 됨.
+    mesh.rotation.x = Math.PI / 2;
+    mesh.bakeCurrentTransformIntoVertices();
+  }
 }
 
 /**
