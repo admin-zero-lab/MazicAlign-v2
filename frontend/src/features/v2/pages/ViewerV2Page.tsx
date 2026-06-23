@@ -793,13 +793,55 @@ const ViewerV2Page: React.FC = () => {
   }, [files.length, project?.name, slicePreview.layerHeightMm, batchExport.busy]);
 
   // ----- STL 내보내기 -----
-  const handleExportStl = useCallback(() => {
+  // Chrome/Edge 의 File System Access API (showSaveFilePicker) 우선 사용 —
+  // 사용자가 매 저장 시 위치 직접 선택 (작업 디렉토리 등). 다운로드 폴더
+  // 안 거쳐서 보안 프로그램 우회. 미지원 브라우저는 기존 downloadBlob fallback.
+  const handleExportStl = useCallback(async () => {
     if (files.length === 0) return;
     const blob = sceneHandleRef.current?.exportStl();
     if (!blob) return;
     const safe = (project?.name ?? "project").replace(/[\\/:*?"<>|]/g, "_");
     const suffix = supports.length > 0 ? "_supported" : "";
-    downloadBlob(blob, `${safe}${suffix}.stl`);
+    const fileName = `${safe}${suffix}.stl`;
+
+    const w = window as unknown as {
+      showSaveFilePicker?: (opts: {
+        suggestedName?: string;
+        types?: {
+          description?: string;
+          accept: Record<string, string[]>;
+        }[];
+      }) => Promise<{
+        createWritable: () => Promise<{
+          write: (data: Blob) => Promise<void>;
+          close: () => Promise<void>;
+        }>;
+      }>;
+    };
+
+    if (typeof w.showSaveFilePicker === "function") {
+      try {
+        const handle = await w.showSaveFilePicker({
+          suggestedName: fileName,
+          types: [
+            {
+              description: "STL binary",
+              accept: { "model/stl": [".stl"] },
+            },
+          ],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        return;
+      } catch (e) {
+        // 사용자 취소 (AbortError) → 그대로 종료, fallback X.
+        if ((e as { name?: string })?.name === "AbortError") return;
+        // 기타 오류 → fallback.
+      }
+    }
+
+    downloadBlob(blob, fileName);
   }, [files.length, project?.name, supports.length]);
 
   const handleClearAllSupports = useCallback(async () => {
