@@ -29,7 +29,11 @@ import {
 
 import { loadStlIntoScene } from "../utils/stl-loader";
 import { applyOverhangColors } from "../utils/overhang";
-import { applyTransformToMesh, readMeshTransform } from "../utils/transform";
+import {
+  applyTransformToMesh,
+  computeAlignFloorTransform,
+  readMeshTransform,
+} from "../utils/transform";
 import { findClosestT } from "../utils/bridge-path";
 import { IDENTITY_TRANSFORM, type TransformV2 } from "../types/transform";
 import {
@@ -154,6 +158,16 @@ interface BabylonSceneProps {
     which: "base" | "contact",
     pos: [number, number, number],
   ) => void;
+  /** STL 메쉬 더블 클릭 (= select 모드에서 회전 모드 활성화 신호). */
+  onDoublePickStl?: (id: string) => void;
+  /**
+   * '바닥면 붙이기' sub-mode 활성 여부. true 면 STL face 클릭 시
+   * onAlignFaceToFloor 호출 — 그 face 의 world normal 이 -Y 가 되게
+   * STL 을 회전하고 minY 가 0 이 되게 Y 이동.
+   */
+  alignFloorMode?: boolean;
+  /** 바닥면 붙이기 face 클릭 결과: 회전 후의 새 TransformV2. */
+  onAlignFaceToFloor?: (id: string, newTransform: TransformV2) => void;
   className?: string;
 }
 
@@ -257,6 +271,9 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       sliceY,
       onMoveBridgeControlPoint,
       onMoveBridgeEndpoint,
+      onDoublePickStl,
+      alignFloorMode,
+      onAlignFaceToFloor,
       className = "",
     },
     ref,
@@ -328,6 +345,12 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     onMoveBridgeCpRef.current = onMoveBridgeControlPoint;
     const onMoveBridgeEndpointRef = useRef(onMoveBridgeEndpoint);
     onMoveBridgeEndpointRef.current = onMoveBridgeEndpoint;
+    const onDoublePickStlRef = useRef(onDoublePickStl);
+    onDoublePickStlRef.current = onDoublePickStl;
+    const alignFloorModeRef = useRef<boolean>(!!alignFloorMode);
+    alignFloorModeRef.current = !!alignFloorMode;
+    const onAlignFaceToFloorRef = useRef(onAlignFaceToFloor);
+    onAlignFaceToFloorRef.current = onAlignFaceToFloor;
     const selectedSupportRef = useRef<string | null>(selectedSupportId);
     selectedSupportRef.current = selectedSupportId;
     const bridgeModeRef = useRef<boolean>(bridgeMode);
@@ -602,6 +625,22 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       rotationGizmoRef.current = rotationGizmo;
       scaleGizmoRef.current = scaleGizmo;
 
+      // 더블 클릭: STL 메쉬면 회전 모드 활성화 신호.
+      scene.onPointerObservable.add((info) => {
+        if (info.type !== PointerEventTypes.POINTERDOUBLETAP) return;
+        const evt = info.event as PointerEvent;
+        if (evt.button !== 0) return;
+        const picked = info.pickInfo?.pickedMesh;
+        if (!picked) return;
+        if (editModeRef.current !== "select") return;
+        for (const [id, mesh] of meshMapRef.current) {
+          if (mesh === picked) {
+            onDoublePickStlRef.current?.(id);
+            return;
+          }
+        }
+      });
+
       // 클릭 픽업: 좌클릭으로 단순 클릭 (드래그 없는) 시 mesh 픽.
       // 메쉬 위면 선택, 빈 공간이면 선택 해제.
       scene.onPointerObservable.add((info) => {
@@ -703,10 +742,21 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         }
 
         // 'select' 모드 (기본): 모델 선택 / 빈 공간 = 해제.
+        // 단 alignFloorMode 활성 시 STL face 클릭 → 바닥면 정렬.
         const multi = evt.ctrlKey || evt.metaKey;
         if (!picked) {
           onPickRef.current(null, { multi });
           return;
+        }
+        if (alignFloorModeRef.current && info.pickInfo) {
+          const n = info.pickInfo.getNormal(true, true);
+          for (const [id, mesh] of meshMapRef.current) {
+            if (mesh === picked && n) {
+              const newT = computeAlignFloorTransform(mesh, n);
+              onAlignFaceToFloorRef.current?.(id, newT);
+              return;
+            }
+          }
         }
         for (const [id, mesh] of meshMapRef.current) {
           if (mesh === picked) {

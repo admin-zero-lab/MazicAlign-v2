@@ -17,7 +17,7 @@ const ViewControls: React.FC<ViewControlsProps> = ({
 }) => {
   return (
     <div
-      className={`absolute top-3 right-3 flex flex-col items-stretch bg-white/95 backdrop-blur rounded-md shadow border border-gray-200 text-xs ${className}`}
+      className={`flex flex-col items-stretch bg-white/95 backdrop-blur rounded-md shadow border border-gray-200 text-xs ${className}`}
     >
       <Btn label="Home" onClick={() => onSetView("home")} />
       <Btn label="Fit" onClick={onFit} />

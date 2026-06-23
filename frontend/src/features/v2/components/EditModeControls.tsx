@@ -19,7 +19,7 @@ const EditModeControls: React.FC<EditModeControlsProps> = ({
 }) => {
   return (
     <div
-      className={`absolute top-16 left-3 flex items-stretch bg-white/95 backdrop-blur rounded-md shadow border border-gray-200 text-xs overflow-hidden ${className}`}
+      className={`flex items-stretch bg-white/95 backdrop-blur rounded-md shadow border border-gray-200 text-xs overflow-hidden ${className}`}
     >
       <Btn
         active={mode === "select"}

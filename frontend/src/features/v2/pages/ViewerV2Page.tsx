@@ -70,6 +70,7 @@ const ViewerV2Page: React.FC = () => {
   );
   // 기본 translate — STL 단일 선택 시 자동으로 X/Y/Z 이동 화살표 표시.
   const [gizmoMode, setGizmoMode] = useState<GizmoMode>("translate");
+  const [alignFloorMode, setAlignFloorMode] = useState(false);
   const [editMode, setEditMode] = useState<EditMode>("select");
   const [bridgeMode, setBridgeMode] = useState(false);
   const [pendingBridge, setPendingBridge] = useState<{
@@ -1007,61 +1008,88 @@ const ViewerV2Page: React.FC = () => {
             sliceY={slicePreview.on ? sliceYNow : null}
             onMoveBridgeControlPoint={handleMoveBridgeControlPoint}
             onMoveBridgeEndpoint={handleMoveBridgeEndpoint}
-          />
-
-          <ViewControls
-            onSetView={(p) => sceneHandleRef.current?.setView(p)}
-            onFit={() => sceneHandleRef.current?.fit()}
-          />
-
-          <GizmoControls
-            mode={gizmoMode}
-            onChange={setGizmoMode}
-            enabled={selectedIds.size === 1 && editMode === "select"}
-          />
-
-          <EditModeControls
-            mode={editMode}
-            onChange={(m) => {
-              setEditMode(m);
-              if (m === "select") {
-                setSelectedSupportId(null);
-                setBridgeMode(false);
-                setPendingBridge(null);
-              }
+            onDoublePickStl={(id) => {
+              setSelectedIds(new Set([id]));
+              setGizmoMode("rotate");
+            }}
+            alignFloorMode={alignFloorMode}
+            onAlignFaceToFloor={(id, newT) => {
+              const f = files.find((file) => file.id === id);
+              const oldT = f?.transform ?? IDENTITY_TRANSFORM;
+              handleCommitTransform(id, oldT, newT);
+              setAlignFloorMode(false); // 한 번 사용 후 자동 OFF
             }}
           />
 
-          {selectedIds.size === 1 &&
-            editMode === "select" &&
-            (() => {
-              const id = Array.from(selectedIds)[0];
-              const f = files.find((file) => file.id === id);
-              if (!f) return null;
-              const t = f.transform ?? IDENTITY_TRANSFORM;
-              return (
-                <div className="absolute top-3 left-3 bg-white/90 backdrop-blur rounded-md shadow px-3 py-2 text-xs font-mono text-gray-700 pointer-events-none">
-                  <div className="text-[10px] text-gray-500 mb-0.5 font-sans">
-                    {f.fileName}
+          {/* 우측 상단 stack: 모든 overlay 컨트롤 / 정보 패널 */}
+          <div className="absolute top-3 right-3 flex flex-col items-end gap-2 max-w-[calc(100%-1.5rem)]">
+            <ViewControls
+              onSetView={(p) => sceneHandleRef.current?.setView(p)}
+              onFit={() => sceneHandleRef.current?.fit()}
+            />
+
+            <GizmoControls
+              mode={gizmoMode}
+              onChange={setGizmoMode}
+              enabled={selectedIds.size === 1 && editMode === "select"}
+            />
+
+            {gizmoMode === "rotate" && editMode === "select" && (
+              <button
+                onClick={() => setAlignFloorMode((v) => !v)}
+                className={`px-3 py-1.5 text-xs rounded-md shadow border transition-colors ${
+                  alignFloorMode
+                    ? "bg-primary-600 text-white border-primary-600"
+                    : "bg-white/95 backdrop-blur border-gray-200 text-gray-700 hover:bg-gray-100"
+                }`}
+                title="모델의 한 face 를 클릭하면 그 면이 바닥에 닿도록 회전 + Y 이동"
+              >
+                {alignFloorMode ? "면 클릭 대기..." : "바닥면 붙이기"}
+              </button>
+            )}
+
+            <EditModeControls
+              mode={editMode}
+              onChange={(m) => {
+                setEditMode(m);
+                if (m === "select") {
+                  setSelectedSupportId(null);
+                  setBridgeMode(false);
+                  setPendingBridge(null);
+                }
+              }}
+            />
+
+            {selectedIds.size === 1 &&
+              editMode === "select" &&
+              (() => {
+                const id = Array.from(selectedIds)[0];
+                const f = files.find((file) => file.id === id);
+                if (!f) return null;
+                const t = f.transform ?? IDENTITY_TRANSFORM;
+                return (
+                  <div className="bg-white/90 backdrop-blur rounded-md shadow px-3 py-2 text-xs font-mono text-gray-700 pointer-events-none">
+                    <div className="text-[10px] text-gray-500 mb-0.5 font-sans">
+                      {f.fileName}
+                    </div>
+                    <div>
+                      <span className="text-red-500">X</span>{" "}
+                      {t.tx.toFixed(2)} mm
+                    </div>
+                    <div>
+                      <span className="text-green-600">Y</span>{" "}
+                      {t.ty.toFixed(2)} mm
+                    </div>
+                    <div>
+                      <span className="text-blue-500">Z</span>{" "}
+                      {t.tz.toFixed(2)} mm
+                    </div>
                   </div>
-                  <div>
-                    <span className="text-red-500">X</span>{" "}
-                    {t.tx.toFixed(2)} mm
-                  </div>
-                  <div>
-                    <span className="text-green-600">Y</span>{" "}
-                    {t.ty.toFixed(2)} mm
-                  </div>
-                  <div>
-                    <span className="text-blue-500">Z</span>{" "}
-                    {t.tz.toFixed(2)} mm
-                  </div>
-                </div>
-              );
-            })()}
+                );
+              })()}
 
           {editMode === "support" && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-white/95 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-700">
+            <div className="flex items-center gap-3 bg-white/95 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-700">
               {bridgeMode ? (
                 <span className="pointer-events-none">
                   <strong>Bridge 모드</strong> ·{" "}
@@ -1112,26 +1140,10 @@ const ViewerV2Page: React.FC = () => {
               </button>
             </div>
           )}
+          </div>
+          {/* 우측 상단 stack 끝 */}
 
-
-          {files.length > 0 ? (
-            <div className="absolute bottom-3 left-3 bg-white/90 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-700 space-y-1 pointer-events-none">
-              <div className="flex items-center space-x-2">
-                <span
-                  className="inline-block w-3 h-3 rounded-sm"
-                  style={{ background: "rgb(255, 82, 82)" }}
-                />
-                <span>Overhang (≤ {overhangAngleDeg}°)</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <span
-                  className="inline-block w-3 h-3 rounded-sm"
-                  style={{ background: "rgb(199, 202, 212)" }}
-                />
-                <span>Safe</span>
-              </div>
-            </div>
-          ) : (
+          {files.length === 0 && (
             <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex justify-center pointer-events-none">
               <div className="bg-white/90 backdrop-blur rounded-md shadow px-4 py-3 text-sm text-gray-600">
                 좌측 '+ 추가' 또는 상단 'STL 불러오기' 로 파일을 가져오세요.
@@ -1139,27 +1151,49 @@ const ViewerV2Page: React.FC = () => {
             </div>
           )}
 
-          <div className="absolute bottom-3 right-3 bg-white/90 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-600 pointer-events-none">
-            <div className="flex items-center space-x-2">
-              <span
-                className="inline-block w-3 h-1 rounded"
-                style={{ background: "rgb(255,77,77)" }}
-              />
-              <span>X</span>
-              <span
-                className="inline-block w-3 h-1 rounded ml-2"
-                style={{ background: "rgb(77,230,102)" }}
-              />
-              <span>Y (위)</span>
-              <span
-                className="inline-block w-3 h-1 rounded ml-2"
-                style={{ background: "rgb(89,140,255)" }}
-              />
-              <span>Z</span>
-            </div>
-            <div className="mt-1 text-gray-500">
-              플레이트 {printerProfile.buildVolumeMm[0].toFixed(1)} ×{" "}
-              {printerProfile.buildVolumeMm[1].toFixed(1)} mm · 격자 10 mm
+          {/* 우측 하단 stack: 색 범례 / 축 + 플레이트 정보 */}
+          <div className="absolute bottom-3 right-3 flex flex-col items-end gap-2">
+            {files.length > 0 && (
+              <div className="bg-white/90 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-700 space-y-1 pointer-events-none">
+                <div className="flex items-center space-x-2">
+                  <span
+                    className="inline-block w-3 h-3 rounded-sm"
+                    style={{ background: "rgb(255, 82, 82)" }}
+                  />
+                  <span>Overhang (≤ {overhangAngleDeg}°)</span>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <span
+                    className="inline-block w-3 h-3 rounded-sm"
+                    style={{ background: "rgb(199, 202, 212)" }}
+                  />
+                  <span>Safe</span>
+                </div>
+              </div>
+            )}
+
+            <div className="bg-white/90 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-600 pointer-events-none">
+              <div className="flex items-center space-x-2">
+                <span
+                  className="inline-block w-3 h-1 rounded"
+                  style={{ background: "rgb(255,77,77)" }}
+                />
+                <span>X</span>
+                <span
+                  className="inline-block w-3 h-1 rounded ml-2"
+                  style={{ background: "rgb(77,230,102)" }}
+                />
+                <span>Y (위)</span>
+                <span
+                  className="inline-block w-3 h-1 rounded ml-2"
+                  style={{ background: "rgb(89,140,255)" }}
+                />
+                <span>Z</span>
+              </div>
+              <div className="mt-1 text-gray-500">
+                플레이트 {printerProfile.buildVolumeMm[0].toFixed(1)} ×{" "}
+                {printerProfile.buildVolumeMm[1].toFixed(1)} mm · 격자 10 mm
+              </div>
             </div>
           </div>
         </main>

@@ -20,7 +20,7 @@ const GizmoControls: React.FC<GizmoControlsProps> = ({
 }) => {
   return (
     <div
-      className={`absolute top-3 left-3 flex items-stretch bg-white/95 backdrop-blur rounded-md shadow border border-gray-200 text-xs overflow-hidden ${className}`}
+      className={`flex items-stretch bg-white/95 backdrop-blur rounded-md shadow border border-gray-200 text-xs overflow-hidden ${className}`}
     >
       <Btn
         active={mode === "none"}
