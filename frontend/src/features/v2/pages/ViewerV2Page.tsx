@@ -699,6 +699,9 @@ const ViewerV2Page: React.FC = () => {
       setSelectedIds(new Set());
       void (async () => {
         for (const id of ids) await removeStlFile(id);
+        // STL 삭제는 DB cascade 로 그 STL 의 서포트도 같이 사라지지만
+        // useSupportsV2 state 가 stale 이라 명시적 refresh 필요.
+        await refreshSupports();
       })();
     }
   }, [
@@ -709,6 +712,7 @@ const ViewerV2Page: React.FC = () => {
     handleRemoveSupport,
     handleRemoveBridgeControlPoint,
     removeStlFile,
+    refreshSupports,
   ]);
 
   // 선택된 Bridge 의 변곡점 3 개를 base→contact 직선상 균등 분할
@@ -1050,6 +1054,8 @@ const ViewerV2Page: React.FC = () => {
 
   async function handleRemove(id: string) {
     await removeStlFile(id);
+    // STL 삭제 시 DB cascade 로 supports 도 사라지므로 state sync.
+    await refreshSupports();
     setSelectedIds((prev) => {
       if (!prev.has(id)) return prev;
       const next = new Set(prev);
