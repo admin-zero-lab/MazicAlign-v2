@@ -46,6 +46,8 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
   // 패널 내부 표시값. selected 가 바뀌면 그 값으로 동기화.
   const [local, setLocal] = useState<TransformV2>(IDENTITY_TRANSFORM);
   const startRef = useRef<TransformV2 | null>(null);
+  // Scale uniform 토글: ON 시 sx/sy/sz 가 한 값으로 동기 변경.
+  const [uniformScale, setUniformScale] = useState(true);
 
   useEffect(() => {
     setLocal(selected ? selected.transform : IDENTITY_TRANSFORM);
@@ -72,7 +74,12 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
   function applyField<K extends keyof TransformV2>(key: K, value: number) {
     if (Number.isNaN(value)) return;
     setLocal((prev) => {
-      const next = { ...prev, [key]: value };
+      // uniformScale ON + scale 축이면 세 축 동시 변경.
+      const isScale = key === "sx" || key === "sy" || key === "sz";
+      const next =
+        uniformScale && isScale
+          ? { ...prev, sx: value, sy: value, sz: value }
+          : { ...prev, [key]: value };
       onPreview(selected!.id, next);
       return next;
     });
@@ -172,20 +179,46 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
         </div>
       </Section>
 
-      <Section title="Scale (×)">
-        {(["sx", "sy", "sz"] as const).map((k, i) => (
+      <Section
+        title="Scale (×)"
+        right={
+          <label className="flex items-center gap-1 text-xs text-gray-600 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={uniformScale}
+              onChange={(e) => setUniformScale(e.target.checked)}
+              className="accent-primary-600"
+            />
+            통합 조정
+          </label>
+        }
+      >
+        {uniformScale ? (
           <Row
-            key={k}
-            axis={"XYZ"[i]}
-            value={local[k]}
+            axis="XYZ"
+            value={local.sx}
             min={0.1}
             max={5}
             step={0.01}
             onBegin={beginDrag}
-            onChange={(v) => applyField(k, v)}
+            onChange={(v) => applyField("sx", v)}
             onEnd={endDrag}
           />
-        ))}
+        ) : (
+          (["sx", "sy", "sz"] as const).map((k, i) => (
+            <Row
+              key={k}
+              axis={"XYZ"[i]}
+              value={local[k]}
+              min={0.1}
+              max={5}
+              step={0.01}
+              onBegin={beginDrag}
+              onChange={(v) => applyField(k, v)}
+              onEnd={endDrag}
+            />
+          ))
+        )}
       </Section>
     </div>
   );
@@ -193,16 +226,21 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
 
 function Section({
   title,
+  right,
   children,
 }: {
   title: string;
+  right?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div className="mt-3">
-      <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">
-        {title}
-      </h4>
+      <div className="flex items-center justify-between mb-1">
+        <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+          {title}
+        </h4>
+        {right}
+      </div>
       <div className="space-y-1.5">{children}</div>
     </div>
   );

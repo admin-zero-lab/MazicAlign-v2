@@ -68,6 +68,9 @@ const ViewerV2Page: React.FC = () => {
   } = useSupportsV2(projectId);
 
   const [browserOpen, setBrowserOpen] = useState(false);
+  const [panelTab, setPanelTab] = useState<"transform" | "support">(
+    "transform",
+  );
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -1358,24 +1361,43 @@ const ViewerV2Page: React.FC = () => {
           />
         )}
 
-        <aside className="w-80 border-l bg-white overflow-y-auto">
+        <aside className="w-80 border-l bg-white overflow-y-auto flex flex-col">
           {error && (
             <p className="text-red-600 text-sm m-4">
               프로젝트 조회 실패: {error.message}
             </p>
           )}
-          <div className="p-4 space-y-4">
-            <TransformPanel
-              selected={transformPanelSelected}
-              onPreview={handlePreviewTransform}
-              onCommit={handleCommitTransform}
-            />
-            <SupportParamsPanel
-              onAutoGenerate={handleAutoGenerate}
-              onClearAll={handleClearAllSupports}
-              supportCount={supports.length}
-              busy={autoBusy}
-            />
+          {/* 탭: Transform / Support */}
+          <div className="flex border-b border-gray-200 bg-gray-50 sticky top-0 z-10">
+            {(["transform", "support"] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setPanelTab(t)}
+                className={`flex-1 py-2 text-sm font-medium transition-colors ${
+                  panelTab === t
+                    ? "bg-white text-primary-700 border-b-2 border-primary-600 -mb-px"
+                    : "text-gray-500 hover:bg-gray-100"
+                }`}
+              >
+                {t === "transform" ? "Transform" : "Support"}
+              </button>
+            ))}
+          </div>
+          <div className="p-4">
+            {panelTab === "transform" ? (
+              <TransformPanel
+                selected={transformPanelSelected}
+                onPreview={handlePreviewTransform}
+                onCommit={handleCommitTransform}
+              />
+            ) : (
+              <SupportParamsPanel
+                onAutoGenerate={handleAutoGenerate}
+                onClearAll={handleClearAllSupports}
+                supportCount={supports.length}
+                busy={autoBusy}
+              />
+            )}
           </div>
         </aside>
       </div>
