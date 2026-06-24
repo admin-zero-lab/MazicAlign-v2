@@ -684,7 +684,26 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         const evt = info.event as PointerEvent;
         if (evt.button !== 0) return; // 좌클릭만
 
-        const picked = info.pickInfo?.pickedMesh;
+        let picked = info.pickInfo?.pickedMesh;
+
+        // support 모드 — Bridge sphere (A/B/변곡점) 가 STL 안에 묻혀
+        // ray 가 STL 을 먼저 잡는 경우 우선 픽. 같은 ray 위에 sphere 가
+        // 있으면 그것 채택. 없으면 STL 그대로.
+        if (
+          editModeRef.current === "support" &&
+          bridgeCpMeshesRef.current.length > 0 &&
+          picked &&
+          !bridgeCpMeshesRef.current.includes(picked as Mesh)
+        ) {
+          const spherePick = scene.pick(
+            scene.pointerX,
+            scene.pointerY,
+            (m) => bridgeCpMeshesRef.current.includes(m as Mesh),
+          );
+          if (spherePick?.pickedMesh) {
+            picked = spherePick.pickedMesh;
+          }
+        }
 
         // 'support' 모드:
         //   · Bridge sub-mode 면 기둥 픽도 endpoint 로 → onAddSupportAt.
