@@ -423,6 +423,7 @@ const ViewerV2Page: React.FC = () => {
           ]
         | undefined,
       parentContact: [number, number, number],
+      opts?: { skipCps?: boolean },
     ) => {
       // closure stale 방지: 최신 supports 사용.
       const children = supportsRef.current.filter(
@@ -457,7 +458,10 @@ const ViewerV2Page: React.FC = () => {
         // 변곡점 처리: 사용자가 child 를 직접 휘어놓지 않았다 (= 직선
         // 상태) 면 새 base→contact 직선으로 reset. 사용자가 휘어놓은
         // 곡선이면 끝점 비례 이동으로 모양 보존.
-        if (child.curveControlPoints) {
+        // STL transform 컨텍스트 (skipCps=true) 에서는 affected loop
+        // 가 이미 cps 를 transformPointBetween 으로 정확히 적용했으니
+        // 이 단계 skip — race 방지.
+        if (!opts?.skipCps && child.curveControlPoints) {
           if (
             isStraightCps(
               child.base,
@@ -1023,7 +1027,15 @@ const ViewerV2Page: React.FC = () => {
         );
         // 변환된 부모 Bridge 들의 새 path 로 부착된 child 들도 따라옴.
         for (const f of follows) {
-          await followAttachedChildren(f.parentId, f.base, f.cps, f.contact);
+          // STL transform 컨텍스트 — cps 는 affected loop 가 이미
+          // 처리했으니 follow 의 cps 보정 skip.
+          await followAttachedChildren(
+            f.parentId,
+            f.base,
+            f.cps,
+            f.contact,
+            { skipCps: true },
+          );
         }
       })();
 
