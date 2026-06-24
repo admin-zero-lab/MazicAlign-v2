@@ -1028,6 +1028,49 @@ const ViewerV2Page: React.FC = () => {
         for (const f of follows) {
           await followAttachedChildren(f.parentId, f.base, f.cps, f.contact);
         }
+        // sub Bridge (양 끝 모두 attached) 정확 보정 — newPatches 의
+        // 부모 new path 를 직접 활용해 한 번에 contact + base + cps
+        // 모두 set. follow 가 부모마다 따로 호출되어 race 발생하던
+        // 케이스 해결.
+        const subBridges = supportsRef.current.filter(
+          (s) =>
+            s.source === "bridge" &&
+            s.contactAttachedTo?.supportId &&
+            s.baseAttachedTo?.supportId,
+        );
+        for (const sub of subBridges) {
+          const cParent = newPatches.find(
+            (p) => p.id === sub.contactAttachedTo!.supportId,
+          );
+          const bParent = newPatches.find(
+            (p) => p.id === sub.baseAttachedTo!.supportId,
+          );
+          if (!cParent || !bParent) continue;
+          const newContact = getBridgePathPoint(
+            cParent.patch.base,
+            cParent.patch.curveControlPoints,
+            cParent.patch.contact,
+            sub.contactAttachedTo!.t,
+          );
+          const newBase = getBridgePathPoint(
+            bParent.patch.base,
+            bParent.patch.curveControlPoints,
+            bParent.patch.contact,
+            sub.baseAttachedTo!.t,
+          );
+          const updates: Parameters<typeof patchSupport>[1] = {
+            contact: newContact,
+            base: newBase,
+          };
+          if (sub.curveControlPoints) {
+            updates.curveControlPoints = straightCps(
+              newBase,
+              newContact,
+              sub.curveControlPoints.length,
+            );
+          }
+          await patchSupport(sub.id, updates);
+        }
       })();
 
       // Undo entry: STL transform + 모든 영향 받은 서포트 복원/재적용.
