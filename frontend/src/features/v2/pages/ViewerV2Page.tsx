@@ -423,6 +423,12 @@ const ViewerV2Page: React.FC = () => {
           s.contactAttachedTo?.supportId === parentId ||
           s.baseAttachedTo?.supportId === parentId,
       );
+      console.log("[follow]", {
+        parent: parentId.slice(0, 6),
+        children: children.length,
+        parentBase: parentBase.map((n) => n.toFixed(1)).join(","),
+        parentContact: parentContact.map((n) => n.toFixed(1)).join(","),
+      });
       for (const child of children) {
         const updates: Parameters<typeof patchSupport>[1] = {};
         const newContact =
@@ -1010,6 +1016,31 @@ const ViewerV2Page: React.FC = () => {
           cps: p.curveControlPoints,
         });
       }
+
+      console.log("[xform]", {
+        stl: id.slice(0, 6),
+        affected: affected.length,
+        bridges: affected
+          .filter((s) => s.source === "bridge")
+          .map((s) => ({
+            id: s.id.slice(0, 6),
+            cAtt: s.contactAttachedTo?.supportId?.slice(0, 6),
+            bAtt: s.baseAttachedTo?.supportId?.slice(0, 6),
+            stl: s.stlId.slice(0, 6),
+            bStl: s.baseStlId?.slice(0, 6),
+          })),
+        follows: follows.length,
+        allChildren: supports
+          .filter(
+            (s) =>
+              s.contactAttachedTo?.supportId || s.baseAttachedTo?.supportId,
+          )
+          .map((s) => ({
+            id: s.id.slice(0, 6),
+            cAtt: s.contactAttachedTo?.supportId?.slice(0, 6),
+            bAtt: s.baseAttachedTo?.supportId?.slice(0, 6),
+          })),
+      });
 
       void (async () => {
         await Promise.all(
