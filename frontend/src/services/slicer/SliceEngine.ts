@@ -31,9 +31,12 @@ export class SliceEngine {
             if (z > maxZ) maxZ = z;
         }
 
-        // Adjust start Z to be slightly above the bottom + epsilon
-        const startZ = minZ + layerHeight;
-        const totalLayers = Math.ceil((maxZ - minZ) / layerHeight);
+        // 첫 슬라이스 평면을 minZ(=빌드플레이트 평면) 바로 위로 잡아, 첫 출력 층에
+        // 모델 또는 서포트 foot 의 단면이 그대로 포함되게 한다. 이전엔 startZ 가
+        // minZ + layerHeight 라 첫 층(Z=0 ~ layerHeight) 자체가 누락돼 서포트가
+        // 첫 층에 안 잡히는 회귀가 있었음.
+        const startZ = minZ;
+        const totalLayers = Math.ceil((maxZ - minZ) / layerHeight) + 1;
 
         console.log(`[SliceEngine] Slicing from Z=${minZ} to ${maxZ}, layers=${totalLayers}`);
 

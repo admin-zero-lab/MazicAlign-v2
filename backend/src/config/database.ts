@@ -67,12 +67,20 @@ export const initDatabase = (): void => {
       userId         TEXT NOT NULL,
       adjustmentType TEXT NOT NULL,
       deltaValue     TEXT NOT NULL,
+      transform      TEXT,
       timestamp      TEXT NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_logs_stlId ON adjustment_logs(stlId);
     CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON adjustment_logs(timestamp);
   `);
+
+  // 마이그레이션: 기존 DB에 transform 컬럼이 없으면 추가
+  // (Undo/Redo 시 각 단계의 전체 변환 스냅샷을 복원하는 데 사용)
+  const logColumns = db.prepare('PRAGMA table_info(adjustment_logs)').all() as { name: string }[];
+  if (!logColumns.some((c) => c.name === 'transform')) {
+    db.exec('ALTER TABLE adjustment_logs ADD COLUMN transform TEXT');
+  }
 
   console.log(`✅ SQLite database initialized: ${dbPath}`);
 };

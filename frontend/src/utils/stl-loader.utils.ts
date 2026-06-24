@@ -1,19 +1,27 @@
 import { Scene, Mesh, Vector3, Quaternion, Color3, StandardMaterial, Material, MaterialPluginBase, PointerDragBehavior } from '@babylonjs/core';
 import type { Nullable } from '@babylonjs/core';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
-import type { Transform } from '@types/stl.types';
+import type { Transform } from '@apptypes/stl.types';
 
 /**
- * 바닥면(월드 Y=0) 아래로 통과한 부분을 빨간색으로 표시하는 머티리얼 플러그인
+ * 바닥면(월드 Y=0)에 닿는 부분을 STL 색상의 보색(complementary color)으로 표시하는
+ * 머티리얼 플러그인. 바닥면으로부터 FLOOR_CONTACT_BAND(mm) 이내의 영역이 대상이다.
  */
-class FloorClipMaterialPlugin extends MaterialPluginBase {
+const FLOOR_CONTACT_BAND = 1.0; // 바닥면 접촉으로 간주하는 높이 범위(mm)
+
+/** STL 모델 기본 색상 (미선택) — 연회색 배경에서 눈에 편한 차분한 세이지 틸 */
+export const STL_DEFAULT_COLOR = new Color3(0.42, 0.6, 0.56);
+/** STL 모델 선택 색상 — 기본 색과 뚜렷이 구분되는 밝은 앰버 */
+export const STL_SELECTED_COLOR = new Color3(0.95, 0.62, 0.2);
+
+class FloorContactMaterialPlugin extends MaterialPluginBase {
   constructor(material: Material) {
-    super(material, 'FloorClip', 200, {});
+    super(material, 'FloorContact', 200, {});
     this._enable(true);
   }
 
   getClassName(): string {
-    return 'FloorClipMaterialPlugin';
+    return 'FloorContactMaterialPlugin';
   }
 
   getCustomCode(shaderType: string): Nullable<{ [pointName: string]: string }> {
@@ -26,8 +34,9 @@ class FloorClipMaterialPlugin extends MaterialPluginBase {
     if (shaderType === 'fragment') {
       return {
         CUSTOM_FRAGMENT_DEFINITIONS: 'varying float vFloorWorldY;',
+        // 바닥면 접촉 영역 → STL 색상(vDiffuseColor)의 보색으로 표시
         CUSTOM_FRAGMENT_BEFORE_FRAGCOLOR:
-          'if (vFloorWorldY < 0.0) { color.rgb = vec3(0.85, 0.1, 0.1); }',
+          `if (vFloorWorldY < ${FLOOR_CONTACT_BAND.toFixed(1)}) { color.rgb = vec3(1.0) - vDiffuseColor.rgb; }`,
       };
     }
     return null;
@@ -114,15 +123,22 @@ export const loadSTLFile = async (
         //    originalCenter.y 를 로컬 반높이로 보정하면 translation.z=0 일 때 객체 '바닥'이
         //    Y=0(빌드스테이지 바닥면)에 정확히 닿는다. applyTransform/getTransformFromMesh 가
         //    동일한 originalCenter 를 사용하므로 변환 왕복 일관성은 그대로 유지된다.
+        //    x, z = 0 으로 두면 translation(0,0) 일 때 객체가 빌드스테이지 정중앙(검정 점)에 위치.
+        originalCenter.x = 0;
+        originalCenter.z = 0;
         originalCenter.y = mesh.getBoundingInfo().boundingBox.extendSize.y;
 
         // 기본 재질 설정
         const material = new StandardMaterial(`${fileName}_material`, scene);
-        // 연회색 배경에서 잘 보이면서 눈의 피로를 덜어주는 차분한 청록색(세이지 틸)
-        material.diffuseColor = new Color3(0.42, 0.6, 0.56);
+        // 미선택 기본 색상 (세이지 틸) — 선택 시에는 highlightMesh로 색을 바꾼다
+        material.diffuseColor = STL_DEFAULT_COLOR.clone();
         material.specularColor = new Color3(0.2, 0.2, 0.2);
-        // 바닥면 아래로 통과한 부분을 빨간색으로 표시
-        new FloorClipMaterialPlugin(material);
+        // 단면도(clipPlane)로 잘렸을 때 모델 안쪽 면도 렌더링되도록 양면 그리기.
+        // 빈 껍데기 대신 두께가 있는 단면처럼 채워져 보인다.
+        material.backFaceCulling = false;
+        material.twoSidedLighting = true;
+        // 바닥면에 닿는 부분을 STL 색상의 보색으로 표시
+        new FloorContactMaterialPlugin(material);
         mesh.material = material;
 
         // 바닥면(월드 XZ 평면) 위에서만 이동하는 드래그 비헤이비어
@@ -133,10 +149,16 @@ export const loadSTLFile = async (
           dragPlaneNormal: new Vector3(0, 1, 0),
         });
         floorDragBehavior.useObjectOrientationForDragging = false; // 월드 기준 평면 고정
-        floorDragBehavior.detachCameraControls = false; // 카메라 제어와 분리
+        // 좌클릭 모델 위 = 바닥면 이동, 좌클릭 빈영역 = 카메라 회전.
+        // 모델 드래그 중에는 카메라 회전이 동시에 트리거되지 않도록 카메라 제어를 일시 분리한다.
+        floorDragBehavior.detachCameraControls = true;
         floorDragBehavior.moveAttached = false; // 위치는 아래에서 직접 제어
         floorDragBehavior.updateDragPlane = false; // 드래그 평면을 수평으로 고정
         floorDragBehavior.enabled = false; // 선택 시에만 활성화
+        // 자동 시작/종료를 사용한다 — 좌클릭 down 시 PointerDragBehavior 가 직접 startDrag,
+        // up 시 releaseDrag 한다. 우/휠 클릭은 STLViewer 의 가드(enabled=false 토글)로
+        // 차단되며, 단순 클릭은 onDrag 콜백 자체가 발동하지 않으므로 모델이 따라오지 않는다.
+        floorDragBehavior.startAndReleaseDragOnPointerEvents = true;
 
         // 드래그 시 X·Z(바닥면)만 이동 — mesh.position.y 는 절대 변경하지 않음
         const dragTargetMesh = mesh;
@@ -160,7 +182,7 @@ export const loadSTLFile = async (
         resolve(mesh);
       },
       null,
-      (scene, message, exception) => {
+      (_scene, message) => {
         reject(new Error(`Failed to load STL: ${message}`));
       },
       '.stl'
@@ -181,7 +203,7 @@ export const loadSTLFile = async (
  * Y (화면 밖, 카메라)          Z (화면 안쪽)
  * 
  * 축 매핑:
- *   사용자 X  →  Babylon X  (변환 없음)
+ *   사용자 X  →  Babylon X  (정방향: 홈 탑뷰의 좌우 방향을 반전)
  *   사용자 Y  →  Babylon -Z (Y→Z, 반전: 화면 밖 = Z-)
  *   사용자 Z  →  Babylon Y  (Z→Y, 위)
  */
@@ -202,8 +224,10 @@ export const applyTransform = (mesh: Mesh, transform: Transform): void => {
   // User Y -> Babylon -Z (if Y is forward/depth)
   // User Z -> Babylon Y (Up)
 
+  // 사용자 X 축은 Babylon X 와 부호를 동일하게 매핑한다.
+  // (이전에는 반전 매핑이었으나, 홈 탑뷰의 좌우 방향이 반대로 보여 정방향으로 변경)
   mesh.position = new Vector3(
-    originalCenter.x + transform.translation.x,    // X
+    originalCenter.x + transform.translation.x,    // User X -> Babylon X
     originalCenter.y + transform.translation.z,    // User Z -> Babylon Y
     originalCenter.z - transform.translation.y     // User Y -> Babylon -Z
   );
@@ -262,6 +286,88 @@ export const getTransformFromMesh = (mesh: Mesh): Transform => {
 };
 
 /**
+ * 메쉬를 빌드스테이지 정중앙(X=0, Z=0) + 바닥면(Y=0) 위에 정렬
+ */
+export const centerMeshOnFloor = (mesh: Mesh): void => {
+  mesh.position.x = 0;
+  mesh.position.z = 0;
+  mesh.computeWorldMatrix(true);
+  // 바닥면(Y=0) 위에 안착하도록 높이 보정
+  const minY = mesh.getBoundingInfo().boundingBox.minimumWorld.y;
+  mesh.position.y -= minY;
+  mesh.computeWorldMatrix(true);
+};
+
+/**
+ * 리셋용 배열 함수.
+ * 입력된 모든 메쉬의 회전을 0(기본 자세)으로 되돌린 뒤, X축을 따라 빌드스테이지
+ * 정중앙(원점)을 기준으로 gap(mm) 간격을 유지하며 일렬로 배열하고, 각 메쉬를
+ * 바닥면(Y=0)에 안착시킨다.
+ */
+export const arrangeMeshesCentered = (meshes: Mesh[], gap: number): void => {
+  if (meshes.length === 0) return;
+
+  // 1) 회전 초기화 — 축 정렬 폭을 정확히 측정하기 위해 먼저 수행
+  meshes.forEach((mesh) => {
+    mesh.rotationQuaternion = Quaternion.Identity();
+    mesh.computeWorldMatrix(true);
+  });
+
+  // 2) 각 메쉬의 X축 폭 측정 (위치와 무관하게 max-min)
+  const widths = meshes.map((mesh) => {
+    const bb = mesh.getBoundingInfo().boundingBox;
+    return bb.maximumWorld.x - bb.minimumWorld.x;
+  });
+
+  // 3) 전체 배열 폭 → 중앙 기준 좌측 시작점
+  const totalWidth =
+    widths.reduce((sum, w) => sum + w, 0) + gap * (meshes.length - 1);
+  let cursor = -totalWidth / 2;
+
+  // 4) 좌→우로 배치하고 각 메쉬를 바닥면에 안착
+  meshes.forEach((mesh, i) => {
+    const w = widths[i];
+    // 메쉬 로컬 원점 = 바운딩박스 중심이므로 position.x = 배치 중심 X
+    mesh.position.x = cursor + w / 2;
+    mesh.position.z = 0;
+    cursor += w + gap;
+    mesh.computeWorldMatrix(true);
+    // 바닥면(Y=0) 위에 안착
+    const minY = mesh.getBoundingInfo().boundingBox.minimumWorld.y;
+    mesh.position.y -= minY;
+    mesh.computeWorldMatrix(true);
+  });
+};
+
+/**
+ * 메쉬가 바닥면(Y=0) 아래로 침투한 경우 위로 들어올려 안착시킨다.
+ * 일반 이동·회전으로 인한 바닥면 침투를 막는 용도. 사용자가 Z(높이) 축에 음수
+ * 값을 명시적으로 입력한 경우에는 이 함수를 호출하지 않아 침투를 허용한다.
+ */
+export const clampMeshAboveFloor = (mesh: Mesh): void => {
+  mesh.computeWorldMatrix(true);
+  const bi = mesh.getBoundingInfo();
+  const lmin = bi.minimum;
+  const lmax = bi.maximum;
+  const wm = mesh.getWorldMatrix();
+  // Babylon 의 boundingBox.minimumWorld 가 회전 직후 갱신되지 않는 케이스가 있어,
+  // 8 개 로컬 코너를 worldMatrix 로 직접 변환해 가장 낮은 Y 를 계산한다.
+  const v = new Vector3();
+  let minY = Infinity;
+  const xs = [lmin.x, lmax.x];
+  const ys = [lmin.y, lmax.y];
+  const zs = [lmin.z, lmax.z];
+  for (const x of xs) for (const y of ys) for (const z of zs) {
+    Vector3.TransformCoordinatesFromFloatsToRef(x, y, z, wm, v);
+    if (v.y < minY) minY = v.y;
+  }
+  if (minY < -0.0001 && minY !== Infinity) {
+    mesh.position.y -= minY;
+    mesh.computeWorldMatrix(true);
+  }
+};
+
+/**
  * 메쉬 이동
  */
 export const translateMesh = (mesh: Mesh, delta: Vector3): void => {
@@ -299,14 +405,11 @@ export const setMeshColor = (mesh: Mesh, color: Color3): void => {
 };
 
 /**
- * 메쉬 하이라이트 (선택 시)
+ * 메쉬 하이라이트 — 선택 시 선택 색상, 미선택 시 기본 색상으로 되돌린다.
+ * 모듈 상수를 그대로 넘기면 머티리얼 간 색상 참조가 공유되므로 복제해 전달한다.
  */
 export const highlightMesh = (mesh: Mesh, highlight: boolean): void => {
-  if (highlight) {
-    setMeshColor(mesh, new Color3(0.3, 0.7, 1.0)); // 파란색
-  } else {
-    setMeshColor(mesh, new Color3(0.8, 0.8, 0.9)); // 기본 회색
-  }
+  setMeshColor(mesh, (highlight ? STL_SELECTED_COLOR : STL_DEFAULT_COLOR).clone());
 };
 
 /**
@@ -316,15 +419,3 @@ export const setMeshVisibility = (mesh: Mesh, visible: boolean): void => {
   mesh.isVisible = visible;
 };
 
-/**
- * 메쉬 투명도 설정
- */
-export const setMeshOpacity = (mesh: Mesh, alpha: number): void => {
-  // Use mesh.visibility for simpler and more reliable transparency
-  mesh.visibility = alpha;
-
-  // Also set material alpha if available, just in case
-  if (mesh.material instanceof StandardMaterial) {
-    mesh.material.alpha = alpha;
-  }
-};

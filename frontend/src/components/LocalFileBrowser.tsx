@@ -31,7 +31,7 @@ const formatSize = (bytes: number | null): string => {
  * 백엔드 /api/fs 를 통해 실제 PC 폴더를 탐색
  */
 const LocalFileBrowser: React.FC<Props> = ({ onSelect, onClose }) => {
-  const [currentPath, setCurrentPath] = useState<string>('/');
+  const [, setCurrentPath] = useState<string>('/');
   const [parentPath, setParentPath] = useState<string | null>(null);
   const [items, setItems] = useState<FsItem[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());

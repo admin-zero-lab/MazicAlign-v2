@@ -3,7 +3,7 @@ import type {
   AdjustmentLog,
   AdjustmentType,
   DeltaValue,
-} from '@types/stl.types';
+} from '@apptypes/stl.types';
 
 const API_BASE = '/api/stl';
 
@@ -21,6 +21,12 @@ const parseSTLFile = (data: Record<string, unknown>): STLFile => ({
   fileSize: data.fileSize as number | undefined,
 });
 
+const DEFAULT_TRANSFORM: STLFile['currentTransform'] = {
+  translation: { x: 0, y: 0, z: 0 },
+  rotation: { x: 0, y: 0, z: 0, w: 1 },
+  scale: { x: 1, y: 1, z: 1 },
+};
+
 const parseLog = (data: Record<string, unknown>): AdjustmentLog => ({
   logId: data.logId as string,
   projectId: data.projectId as string,
@@ -28,6 +34,7 @@ const parseLog = (data: Record<string, unknown>): AdjustmentLog => ({
   userId: data.userId as string,
   adjustmentType: data.adjustmentType as AdjustmentType,
   deltaValue: data.deltaValue as DeltaValue,
+  transform: (data.transform as STLFile['currentTransform']) ?? DEFAULT_TRANSFORM,
   timestamp: new Date(data.timestamp as string),
 });
 
@@ -113,12 +120,13 @@ export const createAdjustmentLog = async (
   stlId: string,
   userId: string,
   adjustmentType: AdjustmentType,
-  deltaValue: DeltaValue
+  deltaValue: DeltaValue,
+  transform: STLFile['currentTransform']
 ): Promise<AdjustmentLog> => {
   const res = await fetch(`${API_BASE}/${stlId}/logs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ projectId, userId, adjustmentType, deltaValue }),
+    body: JSON.stringify({ projectId, userId, adjustmentType, deltaValue, transform }),
   });
 
   const json = await res.json();
@@ -155,6 +163,18 @@ export const deleteAllAdjustmentLogs = async (stlId: string): Promise<void> => {
 
   const json = await res.json();
   if (!res.ok || !json.success) throw new Error(json.error || 'Failed to delete all logs');
+};
+
+/**
+ * STL 파일 복제 (Copy & Paste)
+ * 원본 모델을 동일한 변환 상태로 통째로 복제한 새 STL 파일을 반환한다.
+ */
+export const duplicateSTLFile = async (stlId: string): Promise<STLFile> => {
+  const res = await fetch(`${API_BASE}/${stlId}/duplicate`, { method: 'POST' });
+
+  const json = await res.json();
+  if (!res.ok || !json.success) throw new Error(json.error || 'Failed to duplicate STL file');
+  return parseSTLFile(json.data);
 };
 
 /**

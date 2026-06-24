@@ -1,5 +1,5 @@
 import { useAdjustmentLogs } from '@hooks/useAdjustmentLogs';
-import type { AdjustmentLog } from '@types/stl.types';
+import type { AdjustmentLog } from '@apptypes/stl.types';
 
 interface HistoryViewerProps {
   stlId?: string;

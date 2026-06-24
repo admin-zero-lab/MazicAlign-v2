@@ -1,0 +1,1498 @@
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+} from "react";
+import {
+  ArcRotateCamera,
+  Color3,
+  Color4,
+  Engine,
+  HemisphericLight,
+  HighlightLayer,
+  LinesMesh,
+  Mesh,
+  MeshBuilder,
+  Plane,
+  PointerDragBehavior,
+  PointerEventTypes,
+  PositionGizmo,
+  Ray,
+  RotationGizmo,
+  ScaleGizmo,
+  Scene,
+  StandardMaterial,
+  UtilityLayerRenderer,
+  Vector3,
+} from "@babylonjs/core";
+
+import { loadStlIntoScene } from "../utils/stl-loader";
+import { applyOverhangColors } from "../utils/overhang";
+import {
+  applyTransformToMesh,
+  computeAlignFloorTransform,
+  readMeshTransform,
+} from "../utils/transform";
+import { findClosestT } from "../utils/bridge-path";
+import { IDENTITY_TRANSFORM, type TransformV2 } from "../types/transform";
+import {
+  createSupportMaterial,
+  createSupportMesh,
+} from "../utils/support-render";
+import { autoGenerateSupportPoints } from "../support/utils/auto-generate";
+import { meshesToStlBlob } from "../utils/stl-export";
+import { computeMeshVolumeMm3 } from "../utils/mesh-volume";
+import { chainSegments, sliceMeshAtY } from "../utils/slice-section";
+import {
+  buildPolygonFillMesh,
+  createSliceFillMaterial,
+} from "../utils/slice-render";
+import {
+  rasterizePolygons,
+  type SliceMask,
+} from "../utils/slice-rasterize";
+import type { SupportParams, SupportPointV2 } from "../support/types";
+import type { EditMode } from "./EditModeControls";
+
+export type GizmoMode = "none" | "translate" | "rotate" | "scale";
+import {
+  addBuildPlateAndGrid,
+  type SceneFurniture,
+} from "../utils/scene-setup";
+import {
+  applyViewPreset,
+  frameCameraToMeshes,
+  resetCameraOnPlate,
+  type ViewPreset,
+} from "../utils/camera-views";
+import type { STLFileV2 } from "../types/stl";
+
+const HIGHLIGHT_COLOR = new Color3(1.0, 0.78, 0.18); // 따뜻한 노랑
+
+interface BabylonSceneProps {
+  /** 프로젝트의 STL 파일 목록. */
+  files: STLFileV2[];
+  /** 선택된 STL id 집합. 다중 선택 지원. */
+  selectedIds: ReadonlySet<string>;
+  /**
+   * 씬에서 픽으로 선택 변경됐을 때 부모에 알림.
+   * - id == null  → 빈 공간 클릭
+   * - opts.multi  → Ctrl/Meta 키 동시 누름 (토글)
+   */
+  onPick: (id: string | null, opts: { multi: boolean }) => void;
+  /** 오버행 임계각 (deg). */
+  overhangAngleDeg: number;
+  /** Gizmo 모드. 단일 선택일 때만 활성. 'none' 이면 비활성. */
+  gizmoMode: GizmoMode;
+  /** Gizmo 드래그가 끝났을 때 commit. (start, end) 가 다르면 DB+undo. */
+  onGizmoCommit: (id: string, start: TransformV2, end: TransformV2) => void;
+  /** 프로젝트의 서포트 점. 추가·삭제 시 자동 동기화. */
+  supports: SupportPointV2[];
+  /** 서포트 굵기 등 시각화에 쓰는 파라미터. */
+  supportParams: SupportParams;
+  /** 빌드플레이트 가로 (mm). 프로파일에서 옴. */
+  plateWidthMm: number;
+  /** 빌드플레이트 세로 (mm). */
+  plateDepthMm: number;
+  /** 'select' / 'support' — 모드별 픽·드래그·Gizmo 동작. */
+  editMode: EditMode;
+  /** 'support' 모드에서 모델 표면 픽 시 → 그 위치에 서포트 추가.
+   *  contact 는 표면 안쪽으로 push 된 좌표. normal 은 표면 외부
+   *  방향 단위 벡터 (옵셔널 — 기둥 위 클릭 등 normal 없는 경우).
+   *  attachedTo 는 클릭이 다른 Bridge 기둥 위면 그 부모 Bridge id 와
+   *  path 위 t 비율 (Bridge↔Bridge follow). */
+  onAddSupportAt: (
+    stlId: string,
+    contact: [number, number, number],
+    normal?: [number, number, number],
+    attachedTo?: { supportId: string; t: number },
+  ) => void;
+  /**
+   * 'support' 모드에서 기둥 픽 시 선택, 빈 공간 픽 시 null.
+   * 삭제는 Delete 키 / UI 버튼으로 분리.
+   */
+  onPickSupport: (supportId: string | null) => void;
+  /** 현재 선택된 기둥 id (highlight 표시용). */
+  selectedSupportId: string | null;
+  /**
+   * 선택된 기둥의 Gizmo 드래그가 끝났을 때 호출.
+   * newBaseXZ = 새 (X, Z) world 좌표. Y 는 0 으로 고정.
+   * contact 의 Y 는 호출 측에서 옛 값을 유지한다.
+   */
+  onMoveSupport: (id: string, newBaseXZ: [number, number]) => void;
+  /**
+   * Bridge 모드에서 첫 번째 클릭한 지점. null 이면 표시 X.
+   * 두 번째 클릭으로 확정될 때까지 작은 marker 로 보여준다.
+   */
+  pendingBridgePoint: [number, number, number] | null;
+  /**
+   * Bridge sub-mode 활성 여부. true 면:
+   *   · 기둥 픽 → 그 기둥 위 hit point 를 onAddSupportAt 으로 넘김
+   *     (= bridge endpoint 로 사용). stlId 는 기둥의 stlId.
+   *   · 빈 공간 픽 → 무시 (취소는 Esc).
+   */
+  bridgeMode: boolean;
+  /**
+   * Z 슬라이스 미리보기 높이 (mm). null 이면 비활성.
+   * 활성 시 Y > sliceY 영역의 메쉬가 잘려 단면이 보인다.
+   */
+  sliceY: number | null;
+  /**
+   * Bridge 곡선의 변곡점을 사용자가 드래그해서 옮겼을 때 호출.
+   * idx 는 base → contact 방향 순서 (0..n-1). n 은 가변.
+   */
+  onMoveBridgeControlPoint: (
+    supportId: string,
+    idx: number,
+    pos: [number, number, number],
+  ) => void;
+  /**
+   * Bridge 끝점 (base / contact) 을 사용자가 드래그해서 옮겼을 때 호출.
+   * which: 'base' = 첫 번째 클릭으로 정해진 끝, 'contact' = 두 번째 클릭.
+   * 변곡점 비례 이동은 ViewerV2Page handler 가 한 transaction 으로 처리.
+   */
+  onMoveBridgeEndpoint: (
+    supportId: string,
+    which: "base" | "contact",
+    pos: [number, number, number],
+  ) => void;
+  /** STL 메쉬 더블 클릭 (= select 모드에서 회전 모드 활성화 신호). */
+  onDoublePickStl?: (id: string) => void;
+  /** Bridge tube 더블 클릭 — 그 위치 (world 좌표) 에 변곡점 추가. */
+  onDoublePickBridgeTube?: (
+    supportId: string,
+    hitPoint: [number, number, number],
+  ) => void;
+  /** Bridge 변곡점 sphere 가 선택됐을 때 (단일 클릭). Delete 키 처리용. */
+  onSelectBridgeControlPoint?: (
+    supportId: string,
+    idx: number,
+  ) => void;
+  /**
+   * '바닥면 붙이기' sub-mode 활성 여부. true 면 STL face 클릭 시
+   * onAlignFaceToFloor 호출 — 그 face 의 world normal 이 -Y 가 되게
+   * STL 을 회전하고 minY 가 0 이 되게 Y 이동.
+   */
+  alignFloorMode?: boolean;
+  /** 바닥면 붙이기 face 클릭 결과: 회전 후의 새 TransformV2. */
+  onAlignFaceToFloor?: (id: string, newTransform: TransformV2) => void;
+  className?: string;
+}
+
+export interface BabylonSceneHandle {
+  setView: (preset: ViewPreset) => void;
+  fit: () => void;
+  /**
+   * Transform 드래그 미리보기. DB 저장 없이 메쉬에 즉시 반영.
+   * TransformPanel 의 onPreview 가 호출한다.
+   */
+  previewTransform: (id: string, t: TransformV2) => void;
+  /**
+   * 모든 STL 메쉬에 대해 자동 서포트 점을 생성해서 반환한다.
+   * 저장은 호출 측에서 IndexedDB 에 commit.
+   */
+  generateAutoSupports: (
+    projectId: string,
+    params: SupportParams,
+  ) => SupportPointV2[];
+  /**
+   * 현재 씬의 STL + 서포트 메쉬를 합쳐 binary STL Blob 으로 반환.
+   * 모델이 0 개면 null.
+   */
+  exportStl: () => Blob | null;
+  /**
+   * 주어진 sliceY 의 단면을 width × height 픽셀의 1bpp 마스크로.
+   * 모든 STL + 서포트의 union.
+   */
+  getSliceMask: (
+    sliceY: number,
+    widthPx: number,
+    heightPx: number,
+  ) => SliceMask;
+  /**
+   * 씬에 있는 모든 STL + 서포트의 world AABB 최대 Y. 모델 없으면 0.
+   * 슬라이서가 layer count 를 계산할 때 쓴다.
+   */
+  getSceneTopY: () => number;
+  /**
+   * 모델 + 서포트의 부피 (mm³) 합. 출력 시간 / 레진 사용량 추정용.
+   */
+  getBuildVolumeMm3: () => { model: number; support: number };
+  /**
+   * Bridge 경로 (base → cp1 → cp2 → cp3 → contact) 가 STL 메쉬와
+   * 교차하면 변곡점들을 모든 STL 의 maxY + margin 위로 들어올린 새
+   * 변곡점 배열을 반환. 교차 없으면 입력 그대로.
+   *
+   * excludeStlIds: 충돌 검사에서 제외할 STL (보통 base, contact 가 닿아
+   *   있는 두 모델 — 이 두 모델 표면에 의도적으로 끝점이 박혀 있으므로).
+   */
+  autoRouteBridge: (
+    base: [number, number, number],
+    contact: [number, number, number],
+    cps: [
+      [number, number, number],
+      [number, number, number],
+      [number, number, number],
+    ],
+    excludeStlIds: string[],
+  ) => [
+    [number, number, number],
+    [number, number, number],
+    [number, number, number],
+  ];
+  /**
+   * (x, z) 위치에서 startY 부터 -Y 방향으로 ray 를 발사해 가장 가까운
+   * STL 표면 Y 를 반환. excludeStlIds 의 STL 은 검사에서 제외.
+   * 어떤 STL 도 hit 못하면 0 (빌드플레이트).
+   *
+   * 단점 / 자동 서포트의 base 결정에 쓰임 — base 가 다른 모델 상단에
+   * 자동으로 부착되어 직선 경로가 다른 모델을 통과하지 않게 한다.
+   */
+  findSurfaceBelow: (
+    x: number,
+    z: number,
+    startY: number,
+    excludeStlIds: string[],
+  ) => number;
+}
+
+const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
+  function BabylonScene(
+    {
+      files,
+      selectedIds,
+      onPick,
+      overhangAngleDeg,
+      gizmoMode,
+      onGizmoCommit,
+      supports,
+      supportParams,
+      plateWidthMm,
+      plateDepthMm,
+      editMode,
+      onAddSupportAt,
+      onPickSupport,
+      selectedSupportId,
+      onMoveSupport,
+      pendingBridgePoint,
+      bridgeMode,
+      sliceY,
+      onMoveBridgeControlPoint,
+      onMoveBridgeEndpoint,
+      onDoublePickStl,
+      onDoublePickBridgeTube,
+      onSelectBridgeControlPoint,
+      alignFloorMode,
+      onAlignFaceToFloor,
+      className = "",
+    },
+    ref,
+  ) {
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const engineRef = useRef<Engine | null>(null);
+    const sceneRef = useRef<Scene | null>(null);
+    const cameraRef = useRef<ArcRotateCamera | null>(null);
+    const meshMapRef = useRef<Map<string, Mesh>>(new Map());
+    const dragBehaviorMapRef = useRef<Map<string, PointerDragBehavior>>(
+      new Map(),
+    );
+    const supportsRef = useRef<SupportPointV2[]>(supports);
+    supportsRef.current = supports;
+    const supportMeshMapRef = useRef<Map<string, Mesh>>(new Map());
+    const supportMaterialRef = useRef<ReturnType<
+      typeof createSupportMaterial
+    > | null>(null);
+    const sliceOutlineRef = useRef<LinesMesh | null>(null);
+    const sliceFillMeshesRef = useRef<Mesh[]>([]);
+    const bridgeMarkerRef = useRef<Mesh | null>(null);
+    const bridgeMarkerMatRef = useRef<StandardMaterial | null>(null);
+    // Bridge 변곡점 + A/B 끝점 sphere.
+    // 선택된 Bridge: 큰 sphere (드래그 가능, 변곡점 포함).
+    // Bridge 모드 + 안 선택된 Bridge: A/B 작은 sphere (시각화만).
+    const bridgeCpMeshesRef = useRef<Mesh[]>([]);
+    const bridgeCpMatRef = useRef<StandardMaterial | null>(null);
+    const bridgeBMatRef = useRef<StandardMaterial | null>(null); // B 끝점 (청록)
+    const sliceModelMatRef = useRef<ReturnType<
+      typeof createSliceFillMaterial
+    > | null>(null);
+    const sliceSupportMatRef = useRef<ReturnType<
+      typeof createSliceFillMaterial
+    > | null>(null);
+    const furnitureRef = useRef<SceneFurniture | null>(null);
+    const highlightRef = useRef<HighlightLayer | null>(null);
+    const utilityLayerRef = useRef<UtilityLayerRenderer | null>(null);
+    const positionGizmoRef = useRef<PositionGizmo | null>(null);
+    const rotationGizmoRef = useRef<RotationGizmo | null>(null);
+    const scaleGizmoRef = useRef<ScaleGizmo | null>(null);
+    const gizmoDragStartRef = useRef<
+      | { kind: "stl"; id: string; t: TransformV2 }
+      | { kind: "support"; id: string }
+      | null
+    >(null);
+    const gizmoModeRef = useRef<GizmoMode>(gizmoMode);
+    gizmoModeRef.current = gizmoMode;
+
+    // 최신 값을 effect 바깥에서 참조할 수 있게 ref 로 동기화.
+    const overhangRef = useRef<number>(overhangAngleDeg);
+    overhangRef.current = overhangAngleDeg;
+    const liftRef = useRef<number>(supportParams.liftMm);
+    liftRef.current = supportParams.liftMm;
+    const bridgeDiamRef = useRef<number>(supportParams.bridgeDiameterMm);
+    bridgeDiamRef.current = supportParams.bridgeDiameterMm;
+    const plateWRef = useRef<number>(plateWidthMm);
+    plateWRef.current = plateWidthMm;
+    const plateDRef = useRef<number>(plateDepthMm);
+    plateDRef.current = plateDepthMm;
+    const editModeRef = useRef<EditMode>(editMode);
+    editModeRef.current = editMode;
+    const onAddSupportRef = useRef(onAddSupportAt);
+    onAddSupportRef.current = onAddSupportAt;
+    const onPickSupportRef = useRef(onPickSupport);
+    onPickSupportRef.current = onPickSupport;
+    const onMoveSupportRef = useRef(onMoveSupport);
+    onMoveSupportRef.current = onMoveSupport;
+    const onMoveBridgeCpRef = useRef(onMoveBridgeControlPoint);
+    onMoveBridgeCpRef.current = onMoveBridgeControlPoint;
+    const onMoveBridgeEndpointRef = useRef(onMoveBridgeEndpoint);
+    onMoveBridgeEndpointRef.current = onMoveBridgeEndpoint;
+    const onDoublePickStlRef = useRef(onDoublePickStl);
+    onDoublePickStlRef.current = onDoublePickStl;
+    const onDoublePickBridgeTubeRef = useRef(onDoublePickBridgeTube);
+    onDoublePickBridgeTubeRef.current = onDoublePickBridgeTube;
+    const onSelectBridgeControlPointRef = useRef(onSelectBridgeControlPoint);
+    onSelectBridgeControlPointRef.current = onSelectBridgeControlPoint;
+    const alignFloorModeRef = useRef<boolean>(!!alignFloorMode);
+    alignFloorModeRef.current = !!alignFloorMode;
+    const onAlignFaceToFloorRef = useRef(onAlignFaceToFloor);
+    onAlignFaceToFloorRef.current = onAlignFaceToFloor;
+    const selectedSupportRef = useRef<string | null>(selectedSupportId);
+    selectedSupportRef.current = selectedSupportId;
+    const bridgeModeRef = useRef<boolean>(bridgeMode);
+    bridgeModeRef.current = bridgeMode;
+    const selectedRef = useRef<ReadonlySet<string>>(selectedIds);
+    selectedRef.current = selectedIds;
+    const onPickRef = useRef(onPick);
+    onPickRef.current = onPick;
+    const onGizmoCommitRef = useRef(onGizmoCommit);
+    onGizmoCommitRef.current = onGizmoCommit;
+
+    function refreshHighlight() {
+      const hl = highlightRef.current;
+      if (!hl) return;
+      hl.removeAllMeshes();
+      for (const id of selectedRef.current) {
+        const mesh = meshMapRef.current.get(id);
+        if (mesh) hl.addMesh(mesh, HIGHLIGHT_COLOR);
+      }
+      const sSel = selectedSupportRef.current;
+      if (sSel) {
+        const sMesh = supportMeshMapRef.current.get(sSel);
+        if (sMesh) hl.addMesh(sMesh, HIGHLIGHT_COLOR);
+      }
+    }
+
+    /**
+     * 모델 위 좌클릭+드래그로 XZ 평면 이동.
+     * Y 는 모델의 현재 높이에서 고정 (수직 이동은 Gizmo/슬라이더로).
+     */
+    function attachDragBehavior(mesh: Mesh, fileId: string) {
+      const drag = new PointerDragBehavior({
+        dragPlaneNormal: new Vector3(0, 1, 0),
+      });
+      drag.useObjectOrientationForDragging = false;
+      drag.moveAttached = true;
+
+      drag.onDragStartObservable.add(() => {
+        gizmoDragStartRef.current = {
+          kind: "stl",
+          id: fileId,
+          t: readMeshTransform(mesh),
+        };
+      });
+      drag.onDragEndObservable.add(() => {
+        const started = gizmoDragStartRef.current;
+        gizmoDragStartRef.current = null;
+        if (!started || started.kind !== "stl") return;
+        const end = readMeshTransform(mesh);
+        onGizmoCommitRef.current(started.id, started.t, end);
+      });
+
+      // 'support' 모드면 attach 보류 (mode effect 가 attach).
+      if (editModeRef.current === "select") {
+        mesh.addBehavior(drag);
+      }
+      dragBehaviorMapRef.current.set(fileId, drag);
+    }
+
+    function syncGizmo() {
+      const pg = positionGizmoRef.current;
+      const rg = rotationGizmoRef.current;
+      const sg = scaleGizmoRef.current;
+      if (!pg || !rg || !sg) return;
+
+      // 'support' 모드 + 선택된 기둥 → PositionGizmo 만 기둥에 attach.
+      if (editModeRef.current === "support") {
+        const sid = selectedSupportRef.current;
+        const sMesh = sid ? supportMeshMapRef.current.get(sid) ?? null : null;
+        pg.attachedMesh = sMesh;
+        rg.attachedMesh = null;
+        sg.attachedMesh = null;
+        return;
+      }
+
+      // 'select' 모드: 단일 STL 선택 + 사용자 gizmoMode 에 따라.
+      const sel = Array.from(selectedRef.current);
+      const single = sel.length === 1 ? sel[0] : null;
+      const mesh = single ? meshMapRef.current.get(single) ?? null : null;
+      const mode = gizmoModeRef.current;
+
+      pg.attachedMesh = mode === "translate" ? mesh : null;
+      rg.attachedMesh = mode === "rotate" ? mesh : null;
+      sg.attachedMesh = mode === "scale" ? mesh : null;
+    }
+
+    // 1) 씬 부트스트랩
+    useEffect(() => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      const engine = new Engine(canvas, true, {
+        preserveDrawingBuffer: true,
+        stencil: true,
+      });
+      const scene = new Scene(engine);
+      // ChiTuBox 풍 어두운 회색 배경. 모델의 청록색이 더 또렷.
+      scene.clearColor = new Color4(0.36, 0.37, 0.4, 1);
+      // ambient 줄여 그림자/대비 강화 (옛: 0.45 → 0.22).
+      scene.ambientColor = new Color3(0.22, 0.23, 0.26);
+
+      // Bridge handle (A/B/변곡점 sphere) 용 별도 렌더링 그룹.
+      // 그룹 1 그릴 때 depth buffer 를 새로 클리어 → 모델 안에 박혀
+      // 있어도 항상 위에 보인다.
+      scene.setRenderingAutoClearDepthStencil(1, true, true, false);
+
+      const camera = new ArcRotateCamera(
+        "cam",
+        -Math.PI / 4,
+        Math.PI / 3,
+        300,
+        Vector3.Zero(),
+        scene,
+      );
+      camera.attachControl(canvas, true);
+      // wheelPrecision 은 휠 입력에 대한 "나눗셈" 계수 → 값이 작을수록
+      // 한 노치당 줌이 커진다. 5.0 = Babylon 기본 (30) 대비 6 배.
+      camera.wheelPrecision = 5.0;
+      camera.minZ = 0.1;
+      camera.panningSensibility = 50;
+      camera.inertia = 0.7;
+
+      // ChiTuBox 풍: 위는 강하게, 옆/아래는 약하게 → 윗면 밝고 옆면
+      // 어두운 명확한 그림자 대비. 라이트 4 개 다 hemispheric 으로
+      // 부드러운 wrap-around 유지하면서 상대 intensity 만 조정.
+      const lightTop = new HemisphericLight(
+        "lightTop",
+        new Vector3(0.2, 1, 0.3),
+        scene,
+      );
+      lightTop.intensity = 1.05; // 위 빛 강화 (0.7 → 1.05)
+      lightTop.diffuse = new Color3(1, 1, 1);
+      lightTop.specular = new Color3(0.05, 0.05, 0.05);
+
+      const lightBottom = new HemisphericLight(
+        "lightBottom",
+        new Vector3(0, -1, 0),
+        scene,
+      );
+      lightBottom.intensity = 0.06; // 아래 거의 끔 (0.2 → 0.06)
+
+      // 측면 보강 — cylinder 등 둥근 모델 옆면이 새카매지지 않게.
+      const lightSideA = new HemisphericLight(
+        "lightSideA",
+        new Vector3(-1, 0.3, 0.4),
+        scene,
+      );
+      lightSideA.intensity = 0.18; // 0.4 → 0.18
+      lightSideA.specular = new Color3(0.03, 0.03, 0.03);
+
+      const lightSideB = new HemisphericLight(
+        "lightSideB",
+        new Vector3(1, 0.3, -0.4),
+        scene,
+      );
+      lightSideB.intensity = 0.18; // 0.4 → 0.18
+      lightSideB.specular = new Color3(0.03, 0.03, 0.03);
+
+      // 빌드플레이트 / 그리드는 별도 plate effect 에서 생성·재생성한다.
+
+      supportMaterialRef.current = createSupportMaterial(scene);
+      const bridgeMat = new StandardMaterial("v2_bridge_marker_mat", scene);
+      bridgeMat.diffuseColor = new Color3(1.0, 0.55, 0.15);
+      bridgeMat.emissiveColor = new Color3(0.6, 0.3, 0.1);
+      bridgeMat.specularColor = new Color3(0, 0, 0);
+      bridgeMarkerMatRef.current = bridgeMat;
+
+      // Bridge 변곡점 핸들 (노란 sphere) 용 material.
+      const cpMat = new StandardMaterial("v2_bridge_cp_mat", scene);
+      cpMat.diffuseColor = new Color3(1.0, 0.85, 0.1);
+      cpMat.emissiveColor = new Color3(0.5, 0.42, 0.05);
+      cpMat.specularColor = new Color3(0, 0, 0);
+      bridgeCpMatRef.current = cpMat;
+
+      // Bridge B 끝점 (청록) — A 는 기존 주황 marker mat 재사용.
+      const bMat = new StandardMaterial("v2_bridge_b_mat", scene);
+      bMat.diffuseColor = new Color3(0.2, 0.7, 0.85);
+      bMat.emissiveColor = new Color3(0.1, 0.4, 0.5);
+      bMat.specularColor = new Color3(0, 0, 0);
+      bridgeBMatRef.current = bMat;
+
+      sliceModelMatRef.current = createSliceFillMaterial(
+        scene,
+        new Color3(0.85, 0.86, 0.9),
+        "v2_slice_model_mat",
+      );
+      sliceSupportMatRef.current = createSliceFillMaterial(
+        scene,
+        new Color3(0.55, 0.7, 0.95),
+        "v2_slice_support_mat",
+      );
+
+      const hl = new HighlightLayer("v2_highlight", scene, {
+        blurHorizontalSize: 0.6,
+        blurVerticalSize: 0.6,
+      });
+      hl.innerGlow = false;
+      hl.outerGlow = true;
+      highlightRef.current = hl;
+
+      // Gizmo: UtilityLayer 위에 세 종류를 한 번씩만 만들고 영속화한다.
+      // 모드 전환은 attachedMesh = null/target 로만 처리 → 인스턴스
+      // 재생성·콜백 재바인딩 비용이 없다.
+      //
+      // ⚠️ autoClearDepthAndStencil 은 기본값(true) 유지. false 로
+      // 두면 메인 scene 의 depth buffer 가 그대로 남아 gizmo 가
+      // 모델 뒤로 가려진다.
+      const utility = new UtilityLayerRenderer(scene);
+
+      const positionGizmo = new PositionGizmo(utility);
+      const rotationGizmo = new RotationGizmo(utility);
+      const scaleGizmo = new ScaleGizmo(utility);
+
+      // 모델이 작을 때 (10mm 단위) 화살표가 묻혀 보이는 걸 막기 위해
+      // scaleRatio 를 키운다.
+      const SCALE = 1.8;
+      positionGizmo.scaleRatio = SCALE;
+      rotationGizmo.scaleRatio = SCALE;
+      scaleGizmo.scaleRatio = SCALE;
+
+      const onDragStart = () => {
+        // PositionGizmo 가 support mesh 에 붙어있으면 support 이동 모드.
+        const attached = positionGizmo.attachedMesh;
+        if (attached) {
+          const meta = (attached as { metadata?: { type?: string; supportId?: string } })
+            .metadata;
+          if (meta?.type === "support" && meta.supportId) {
+            gizmoDragStartRef.current = {
+              kind: "support",
+              id: meta.supportId,
+            };
+            return;
+          }
+        }
+        // STL transform (기존).
+        const sel = Array.from(selectedRef.current);
+        if (sel.length !== 1) return;
+        const id = sel[0];
+        const mesh = meshMapRef.current.get(id);
+        if (!mesh) return;
+        gizmoDragStartRef.current = {
+          kind: "stl",
+          id,
+          t: readMeshTransform(mesh),
+        };
+      };
+      const onDragEnd = () => {
+        const started = gizmoDragStartRef.current;
+        gizmoDragStartRef.current = null;
+        if (!started) return;
+        if (started.kind === "support") {
+          const sMesh = supportMeshMapRef.current.get(started.id);
+          if (!sMesh) return;
+          onMoveSupportRef.current(started.id, [
+            sMesh.position.x,
+            sMesh.position.z,
+          ]);
+          return;
+        }
+        const mesh = meshMapRef.current.get(started.id);
+        if (!mesh) return;
+        const end = readMeshTransform(mesh);
+        onGizmoCommitRef.current(started.id, started.t, end);
+      };
+      [positionGizmo, rotationGizmo, scaleGizmo].forEach((giz) => {
+        giz.onDragStartObservable.add(onDragStart);
+        giz.onDragEndObservable.add(onDragEnd);
+      });
+
+      utilityLayerRef.current = utility;
+      positionGizmoRef.current = positionGizmo;
+      rotationGizmoRef.current = rotationGizmo;
+      scaleGizmoRef.current = scaleGizmo;
+
+      // 더블 클릭:
+      //   · STL mesh (select 모드)         → 회전 모드 활성화 신호
+      //   · Bridge tube (support 모드)     → 그 위치에 변곡점 추가
+      scene.onPointerObservable.add((info) => {
+        if (info.type !== PointerEventTypes.POINTERDOUBLETAP) return;
+        const evt = info.event as PointerEvent;
+        if (evt.button !== 0) return;
+        const picked = info.pickInfo?.pickedMesh;
+        if (!picked) return;
+
+        // Bridge tube?
+        const meta = (
+          picked as {
+            metadata?: { type?: string; supportId?: string };
+          }
+        ).metadata;
+        if (
+          editModeRef.current === "support" &&
+          meta?.type === "support" &&
+          meta.supportId &&
+          info.pickInfo?.pickedPoint
+        ) {
+          const p = info.pickInfo.pickedPoint;
+          onDoublePickBridgeTubeRef.current?.(meta.supportId, [p.x, p.y, p.z]);
+          return;
+        }
+
+        // STL mesh?
+        if (editModeRef.current !== "select") return;
+        for (const [id, mesh] of meshMapRef.current) {
+          if (mesh === picked) {
+            onDoublePickStlRef.current?.(id);
+            return;
+          }
+        }
+      });
+
+      // 클릭 픽업: 좌클릭으로 단순 클릭 (드래그 없는) 시 mesh 픽.
+      // 메쉬 위면 선택, 빈 공간이면 선택 해제.
+      scene.onPointerObservable.add((info) => {
+        if (info.type !== PointerEventTypes.POINTERPICK) return;
+        const evt = info.event as PointerEvent;
+        if (evt.button !== 0) return; // 좌클릭만
+
+        let picked = info.pickInfo?.pickedMesh;
+
+        // support 모드 — Bridge sphere (A/B/변곡점) 가 STL 안에 묻혀
+        // ray 가 STL 을 먼저 잡는 경우 우선 픽. 같은 ray 위에 sphere 가
+        // 있으면 그것 채택. 없으면 STL 그대로.
+        if (
+          editModeRef.current === "support" &&
+          bridgeCpMeshesRef.current.length > 0 &&
+          picked &&
+          !bridgeCpMeshesRef.current.includes(picked as Mesh)
+        ) {
+          const spherePick = scene.pick(
+            scene.pointerX,
+            scene.pointerY,
+            (m) => bridgeCpMeshesRef.current.includes(m as Mesh),
+          );
+          if (spherePick?.pickedMesh) {
+            picked = spherePick.pickedMesh;
+          }
+        }
+
+        // 'support' 모드:
+        //   · Bridge sub-mode 면 기둥 픽도 endpoint 로 → onAddSupportAt.
+        //   · 그 외 기둥 픽 → 선택. 모델 표면 픽 → 추가.
+        //   · 빈 공간 픽 → 선택 해제 (bridge 모드는 무시, Esc 로 취소).
+        if (editModeRef.current === "support") {
+          const bridge = bridgeModeRef.current;
+
+          if (!picked) {
+            if (!bridge) onPickSupportRef.current(null);
+            return;
+          }
+          const meta = (
+            picked as {
+              metadata?: {
+                type?: string;
+                supportId?: string;
+                stlId?: string;
+                cpIdx?: number;
+              };
+            }
+          ).metadata;
+
+          // 변곡점 sphere 단일 클릭 → 선택 (Delete 키로 제거).
+          if (
+            meta?.type === "bridge-cp" &&
+            meta.supportId &&
+            typeof meta.cpIdx === "number"
+          ) {
+            onSelectBridgeControlPointRef.current?.(
+              meta.supportId,
+              meta.cpIdx,
+            );
+            return;
+          }
+
+          if (meta?.type === "support" && meta.supportId) {
+            // Bridge 모드 → 기둥 위 hit point 를 새 endpoint 로.
+            // 기둥 표면 안쪽으로 normal × PEN 만큼 push → Bridge↔Bridge
+            // 연결 시 void 제거. PEN 은 기둥 반지름의 70% 이하 (양면
+            // 통과 방지). 굵기는 안 바뀌고 길이만 살짝 연장.
+            if (bridge && info.pickInfo?.pickedPoint && meta.stlId) {
+              const p = info.pickInfo.pickedPoint;
+              const n = info.pickInfo.getNormal(true, true);
+              const radius = bridgeDiamRef.current * 0.5;
+              // PEN = 반지름의 120% → cap 평면이 부모 axis 를 넘어가서
+              // cap 가장자리 (반지름 = child radius) 가 부모 cylinder
+              // cross-section 안에 완전히 박힌다. 굵기 균일 유지,
+              // 외형 벗어남 0. (양면 통과는 PEN < 2×radius 라 안전.)
+              const PEN = radius * 1.2;
+              const cx = n ? p.x - n.x * PEN : p.x;
+              const cy = n ? p.y - n.y * PEN : p.y;
+              const cz = n ? p.z - n.z * PEN : p.z;
+              const nArr: [number, number, number] | undefined = n
+                ? [n.x, n.y, n.z]
+                : undefined;
+              // attachedTo: 부모 Bridge path 위의 t 비율. 부모가
+              // 수정되면 child 가 따라 이동.
+              const parent = supportsRef.current.find(
+                (s) => s.id === meta.supportId,
+              );
+              let attachedTo:
+                | { supportId: string; t: number }
+                | undefined;
+              if (parent && parent.source === "bridge") {
+                const t = findClosestT(
+                  parent.base,
+                  parent.curveControlPoints,
+                  parent.contact,
+                  [p.x, p.y, p.z],
+                );
+                attachedTo = { supportId: meta.supportId, t };
+              }
+              onAddSupportRef.current(
+                meta.stlId,
+                [cx, cy, cz],
+                nArr,
+                attachedTo,
+              );
+              return;
+            }
+            // 그 외 → 선택.
+            onPickSupportRef.current(meta.supportId);
+            return;
+          }
+          for (const [id, mesh] of meshMapRef.current) {
+            if (mesh === picked && info.pickInfo?.pickedPoint) {
+              const p = info.pickInfo.pickedPoint;
+              // 표면 안쪽으로 push → 서포트 끝 cap 이 표면 밖으로
+              // 튀어나오지 않게. Bridge 는 굵기가 커서 더 깊이.
+              const n = info.pickInfo.getNormal(true, true);
+              const PEN = bridge ? 0.8 : 0.3;
+              const cx = n ? p.x - n.x * PEN : p.x;
+              const cy = n ? p.y - n.y * PEN : p.y;
+              const cz = n ? p.z - n.z * PEN : p.z;
+              const nArr: [number, number, number] | undefined = n
+                ? [n.x, n.y, n.z]
+                : undefined;
+              onAddSupportRef.current(id, [cx, cy, cz], nArr);
+              if (!bridge) onPickSupportRef.current(null);
+              return;
+            }
+          }
+          return;
+        }
+
+        // 'select' 모드 (기본): 모델 선택 / 빈 공간 = 해제.
+        // 단 alignFloorMode 활성 시 STL face 클릭 → 바닥면 정렬.
+        const multi = evt.ctrlKey || evt.metaKey;
+        if (!picked) {
+          onPickRef.current(null, { multi });
+          return;
+        }
+        if (alignFloorModeRef.current && info.pickInfo) {
+          const n = info.pickInfo.getNormal(true, true);
+          for (const [id, mesh] of meshMapRef.current) {
+            if (mesh === picked && n) {
+              const newT = computeAlignFloorTransform(mesh, n);
+              onAlignFaceToFloorRef.current?.(id, newT);
+              return;
+            }
+          }
+        }
+        for (const [id, mesh] of meshMapRef.current) {
+          if (mesh === picked) {
+            onPickRef.current(id, { multi });
+            return;
+          }
+        }
+        // furniture (plate/grid/axes) 픽은 isPickable=false 라 안 옴.
+      });
+
+      engineRef.current = engine;
+      sceneRef.current = scene;
+      cameraRef.current = camera;
+
+      // 초기 카메라 위치는 plate effect 에서 잡는다.
+
+      engine.runRenderLoop(() => scene.render());
+
+      const onResize = () => engine.resize();
+      window.addEventListener("resize", onResize);
+
+      return () => {
+        window.removeEventListener("resize", onResize);
+        positionGizmoRef.current?.dispose();
+        rotationGizmoRef.current?.dispose();
+        scaleGizmoRef.current?.dispose();
+        positionGizmoRef.current = null;
+        rotationGizmoRef.current = null;
+        scaleGizmoRef.current = null;
+        utilityLayerRef.current?.dispose();
+        utilityLayerRef.current = null;
+        for (const sm of supportMeshMapRef.current.values()) {
+          sm.dispose();
+        }
+        supportMeshMapRef.current.clear();
+        supportMaterialRef.current?.dispose();
+        supportMaterialRef.current = null;
+        sliceOutlineRef.current?.dispose();
+        sliceOutlineRef.current = null;
+        for (const fm of sliceFillMeshesRef.current) fm.dispose();
+        sliceFillMeshesRef.current = [];
+        bridgeMarkerRef.current?.dispose();
+        bridgeMarkerRef.current = null;
+        bridgeMarkerMatRef.current?.dispose();
+        bridgeMarkerMatRef.current = null;
+        sliceModelMatRef.current?.dispose();
+        sliceSupportMatRef.current?.dispose();
+        sliceModelMatRef.current = null;
+        sliceSupportMatRef.current = null;
+        for (const mesh of meshMapRef.current.values()) {
+          mesh.dispose();
+        }
+        meshMapRef.current.clear();
+        furnitureRef.current?.dispose();
+        furnitureRef.current = null;
+        hl.dispose();
+        highlightRef.current = null;
+        scene.dispose();
+        engine.dispose();
+        engineRef.current = null;
+        sceneRef.current = null;
+        cameraRef.current = null;
+      };
+    }, []);
+
+    // 1.5) plate 크기 변경 시 furniture 재생성 + 카메라 reset.
+    useEffect(() => {
+      const scene = sceneRef.current;
+      const camera = cameraRef.current;
+      if (!scene || !camera) return;
+
+      furnitureRef.current?.dispose();
+      furnitureRef.current = addBuildPlateAndGrid(scene, {
+        widthMm: plateWidthMm,
+        depthMm: plateDepthMm,
+      });
+
+      // 모델이 없을 때만 plate 기준으로 camera reset (모델이 있으면
+      // 사용자 시점 유지).
+      if (meshMapRef.current.size === 0) {
+        resetCameraOnPlate(camera, plateWidthMm, plateDepthMm);
+      }
+    }, [plateWidthMm, plateDepthMm]);
+
+    // 2) files 변경 시 메쉬 동기화
+    useEffect(() => {
+      const scene = sceneRef.current;
+      const camera = cameraRef.current;
+      if (!scene || !camera) return;
+
+      let cancelled = false;
+
+      const currentIds = new Set(meshMapRef.current.keys());
+      const nextIds = new Set(files.map((f) => f.id));
+
+      for (const id of currentIds) {
+        if (!nextIds.has(id)) {
+          meshMapRef.current.get(id)?.dispose();
+          meshMapRef.current.delete(id);
+        }
+      }
+
+      const newFiles = files.filter((f) => !currentIds.has(f.id));
+      const wasEmpty = currentIds.size === 0;
+
+      Promise.all(
+        newFiles.map(async (f) => {
+          try {
+            const mesh = await loadStlIntoScene(
+              scene,
+              f.blob,
+              f.fileName,
+              liftRef.current,
+            );
+            if (cancelled) {
+              mesh.dispose();
+              return null;
+            }
+            applyOverhangColors(mesh, overhangRef.current);
+            applyTransformToMesh(mesh, f.transform ?? IDENTITY_TRANSFORM);
+            mesh.isPickable = true;
+            attachDragBehavior(mesh, f.id);
+            meshMapRef.current.set(f.id, mesh);
+            return mesh;
+          } catch (e) {
+            console.error("[v2] STL 로드 실패", f.fileName, e);
+            return null;
+          }
+        }),
+      ).then((loaded) => {
+        if (cancelled) return;
+        if (wasEmpty && loaded.some((m) => m !== null)) {
+          frameCameraToMeshes(
+            camera,
+            loaded.filter((m): m is Mesh => m !== null),
+          );
+        }
+        refreshHighlight();
+        // load 가 끝난 뒤에야 mesh 가 존재하므로 여기서 다시 attach.
+        syncGizmo();
+      });
+
+      // 기존 메쉬들은 transform 변경 가능성 체크
+      for (const f of files) {
+        if (currentIds.has(f.id)) {
+          const mesh = meshMapRef.current.get(f.id);
+          if (mesh) {
+            applyTransformToMesh(mesh, f.transform ?? IDENTITY_TRANSFORM);
+          }
+        }
+      }
+
+      return () => {
+        cancelled = true;
+      };
+    }, [files]);
+
+    // 3) 임계각 변경 시 모든 메쉬 색 재할당
+    useEffect(() => {
+      for (const mesh of meshMapRef.current.values()) {
+        applyOverhangColors(mesh, overhangAngleDeg);
+      }
+    }, [overhangAngleDeg]);
+
+    // 3.5) 서포트 점 동기화 — supports / supportParams 변경 시 전부
+    //      dispose 후 재생성. 굵기 변화가 즉시 반영되도록 단순화.
+    useEffect(() => {
+      const scene = sceneRef.current;
+      const mat = supportMaterialRef.current;
+      if (!scene || !mat) return;
+
+      for (const sm of supportMeshMapRef.current.values()) sm.dispose();
+      supportMeshMapRef.current.clear();
+
+      for (const p of supports) {
+        const m = createSupportMesh(scene, p, supportParams, mat);
+        m.isPickable = editModeRef.current === "support";
+        supportMeshMapRef.current.set(p.id, m);
+      }
+    }, [supports, supportParams]);
+
+    // 4) 선택 변경 시 highlight 갱신
+    useEffect(() => {
+      refreshHighlight();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedIds, selectedSupportId]);
+
+    // 5) Gizmo: 선택 / 모드 / files / editMode / supports / selectedSupportId 변경 시 attach 재계산
+    useEffect(() => {
+      syncGizmo();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedIds, gizmoMode, files, editMode, supports, selectedSupportId]);
+
+    // 5.5) Z 슬라이스 미리보기:
+    //   · scene.clipPlane 으로 Y > sliceY 영역 컬링.
+    //   · 모든 mesh 의 단면 segment 계산 → chain → polygon fill mesh.
+    //   · outline 라인은 polygon 경계 위에 얇게 그려 강조.
+    useEffect(() => {
+      const scene = sceneRef.current;
+      const modelMat = sliceModelMatRef.current;
+      const supportMat = sliceSupportMatRef.current;
+      if (!scene || !modelMat || !supportMat) return;
+
+      // 기존 fill / outline 정리.
+      for (const fm of sliceFillMeshesRef.current) fm.dispose();
+      sliceFillMeshesRef.current = [];
+      sliceOutlineRef.current?.dispose();
+      sliceOutlineRef.current = null;
+
+      if (sliceY == null) {
+        scene.clipPlane = null;
+        return;
+      }
+
+      scene.clipPlane = new Plane(0, 1, 0, -sliceY);
+
+      const yFill = sliceY + 0.005;
+      const yLine = sliceY + 0.02;
+      const lines: Vector3[][] = [];
+
+      // 모델 단면.
+      for (const mesh of meshMapRef.current.values()) {
+        const segs = sliceMeshAtY(mesh, sliceY);
+        if (segs.length === 0) continue;
+        const polys = chainSegments(segs);
+        for (const p of polys) {
+          const fill = buildPolygonFillMesh(
+            scene,
+            p,
+            yFill,
+            modelMat,
+            "v2_slice_model_fill",
+          );
+          if (fill) sliceFillMeshesRef.current.push(fill);
+        }
+        for (const s of segs) {
+          lines.push([
+            new Vector3(s.a[0], yLine, s.a[1]),
+            new Vector3(s.b[0], yLine, s.b[1]),
+          ]);
+        }
+      }
+
+      // 서포트 단면.
+      for (const sm of supportMeshMapRef.current.values()) {
+        const segs = sliceMeshAtY(sm, sliceY);
+        if (segs.length === 0) continue;
+        const polys = chainSegments(segs);
+        for (const p of polys) {
+          const fill = buildPolygonFillMesh(
+            scene,
+            p,
+            yFill,
+            supportMat,
+            "v2_slice_support_fill",
+          );
+          if (fill) sliceFillMeshesRef.current.push(fill);
+        }
+        for (const s of segs) {
+          lines.push([
+            new Vector3(s.a[0], yLine, s.a[1]),
+            new Vector3(s.b[0], yLine, s.b[1]),
+          ]);
+        }
+      }
+
+      if (lines.length > 0) {
+        const ol = MeshBuilder.CreateLineSystem(
+          "v2_slice_outline",
+          { lines },
+          scene,
+        );
+        ol.color = new Color3(1.0, 0.55, 0.15);
+        ol.isPickable = false;
+        sliceOutlineRef.current = ol;
+      }
+    }, [sliceY, files, supports, supportParams]);
+
+    // 5.6) Bridge pending point marker (작은 주황 sphere).
+    useEffect(() => {
+      const scene = sceneRef.current;
+      const mat = bridgeMarkerMatRef.current;
+      if (!scene || !mat) return;
+
+      bridgeMarkerRef.current?.dispose();
+      bridgeMarkerRef.current = null;
+      if (!pendingBridgePoint) return;
+
+      const m = MeshBuilder.CreateSphere(
+        "v2_bridge_marker",
+        { diameter: 1.4, segments: 10 },
+        scene,
+      );
+      m.position.set(
+        pendingBridgePoint[0],
+        pendingBridgePoint[1],
+        pendingBridgePoint[2],
+      );
+      m.material = mat;
+      m.isPickable = false;
+      m.renderingGroupId = 1;
+      bridgeMarkerRef.current = m;
+    }, [pendingBridgePoint]);
+
+    // 5.7) Bridge 시각화:
+    //   · Bridge 모드 활성 → 모든 Bridge 의 A (주황) / B (청록) 끝점을
+    //     작은 sphere 로 표시 (시각화만, 드래그 X).
+    //   · 선택된 Bridge → 큰 sphere 로 A/B 표시 + 변곡점 3 개 (노랑),
+    //     PointerDragBehavior 로 드래그 가능.
+    useEffect(() => {
+      const scene = sceneRef.current;
+      const cpMat = bridgeCpMatRef.current;
+      const aMat = bridgeMarkerMatRef.current; // A = 주황 (기존 marker mat)
+      // B 도 주황 — 사용자 요청. (bridgeBMatRef 는 보존, 추후 구분 필요 시 사용.)
+      const bMat = bridgeMarkerMatRef.current;
+      if (!scene || !cpMat || !aMat || !bMat) return;
+
+      // 매번 dispose & 재생성. drag 도중에는 supports 가 안 바뀌므로
+      // 끊김 없이 동작.
+      for (const m of bridgeCpMeshesRef.current) {
+        m.dispose();
+      }
+      bridgeCpMeshesRef.current = [];
+
+      if (editMode !== "support") return;
+
+      const bridges = supports.filter((s) => s.source === "bridge");
+      const dBig = Math.max(supportParams.bridgeDiameterMm * 1.5, 1.2);
+      const dSmall = Math.max(supportParams.bridgeDiameterMm * 1.0, 0.8);
+
+      // 저장된 contact/base 는 표면 안쪽 push 된 상태. sphere 는
+      // 그 반대로 normal × LIFT 만큼 밖으로 끌어내서 사용자가 표면
+      // 위에서 보고 클릭/드래그할 수 있게 한다. (메시 cap 은 안쪽
+      // 박힌 그대로 유지 → void 없는 부착.)
+      const LIFT = 0.8;
+      const liftOut = (
+        pos: [number, number, number],
+        n: [number, number, number] | undefined,
+      ): [number, number, number] => {
+        if (!n) return pos;
+        return [pos[0] + n[0] * LIFT, pos[1] + n[1] * LIFT, pos[2] + n[2] * LIFT];
+      };
+      const undoLift = (
+        pos: { x: number; y: number; z: number },
+        n: [number, number, number] | undefined,
+      ): [number, number, number] => {
+        if (!n) return [pos.x, pos.y, pos.z];
+        return [pos.x - n[0] * LIFT, pos.y - n[1] * LIFT, pos.z - n[2] * LIFT];
+      };
+
+      // (1) Bridge 모드 → 안 선택된 Bridge 들의 A / B 시각화.
+      if (bridgeMode) {
+        for (const sup of bridges) {
+          if (sup.id === selectedSupportId) continue; // 선택된 건 (2) 에서.
+          const aPos = liftOut(sup.base, sup.baseNormal);
+          const aSphere = MeshBuilder.CreateSphere(
+            `v2_bridge_a_viz_${sup.id}`,
+            { diameter: dSmall, segments: 10 },
+            scene,
+          );
+          aSphere.position.set(aPos[0], aPos[1], aPos[2]);
+          aSphere.material = aMat;
+          aSphere.isPickable = false;
+          aSphere.renderingGroupId = 1;
+          bridgeCpMeshesRef.current.push(aSphere);
+
+          const bPos = liftOut(sup.contact, sup.contactNormal);
+          const bSphere = MeshBuilder.CreateSphere(
+            `v2_bridge_b_viz_${sup.id}`,
+            { diameter: dSmall, segments: 10 },
+            scene,
+          );
+          bSphere.position.set(bPos[0], bPos[1], bPos[2]);
+          bSphere.material = bMat;
+          bSphere.isPickable = false;
+          bSphere.renderingGroupId = 1;
+          bridgeCpMeshesRef.current.push(bSphere);
+        }
+      }
+
+      // (2) 선택된 Bridge → A/B 큰 sphere (드래그) + 변곡점 (노랑).
+      if (!selectedSupportId) return;
+      const sup = bridges.find((s) => s.id === selectedSupportId);
+      if (!sup) return;
+
+      const endpoints: {
+        which: "base" | "contact";
+        pos: [number, number, number];
+        normal: [number, number, number] | undefined;
+        mat: StandardMaterial;
+      }[] = [
+        { which: "base", pos: sup.base, normal: sup.baseNormal, mat: aMat },
+        {
+          which: "contact",
+          pos: sup.contact,
+          normal: sup.contactNormal,
+          mat: bMat,
+        },
+      ];
+      for (const ep of endpoints) {
+        const visPos = liftOut(ep.pos, ep.normal);
+        const sphere = MeshBuilder.CreateSphere(
+          `v2_bridge_ep_${sup.id}_${ep.which}`,
+          { diameter: dBig, segments: 10 },
+          scene,
+        );
+        sphere.position.set(visPos[0], visPos[1], visPos[2]);
+        sphere.material = ep.mat;
+        sphere.isPickable = true;
+        sphere.renderingGroupId = 1;
+        const drag = new PointerDragBehavior();
+        drag.useObjectOrientationForDragging = false;
+        sphere.addBehavior(drag);
+        const which = ep.which;
+        const epNormal = ep.normal;
+        drag.onDragEndObservable.add(() => {
+          // 드래그된 sphere 위치 (표면 밖) → normal 만큼 안쪽으로
+          // 되돌려 저장. normal 이 없으면 그대로.
+          const stored = undoLift(
+            { x: sphere.position.x, y: sphere.position.y, z: sphere.position.z },
+            epNormal,
+          );
+          onMoveBridgeEndpointRef.current(sup.id, which, stored);
+        });
+        bridgeCpMeshesRef.current.push(sphere);
+      }
+
+      if (sup.curveControlPoints) {
+        for (let i = 0; i < sup.curveControlPoints.length; i++) {
+          const cp = sup.curveControlPoints[i];
+          const sphere = MeshBuilder.CreateSphere(
+            `v2_bridge_cp_${sup.id}_${i}`,
+            { diameter: dBig, segments: 10 },
+            scene,
+          );
+          sphere.position.set(cp[0], cp[1], cp[2]);
+          sphere.material = cpMat;
+          sphere.isPickable = true;
+          sphere.renderingGroupId = 1;
+          sphere.metadata = {
+            type: "bridge-cp",
+            supportId: sup.id,
+            cpIdx: i,
+          };
+          const drag = new PointerDragBehavior();
+          drag.useObjectOrientationForDragging = false;
+          sphere.addBehavior(drag);
+          const idx = i;
+          drag.onDragEndObservable.add(() => {
+            onMoveBridgeCpRef.current(sup.id, idx, [
+              sphere.position.x,
+              sphere.position.y,
+              sphere.position.z,
+            ]);
+          });
+          bridgeCpMeshesRef.current.push(sphere);
+        }
+      }
+    }, [
+      editMode,
+      bridgeMode,
+      selectedSupportId,
+      supports,
+      supportParams.bridgeDiameterMm,
+    ]);
+
+    // 6) editMode 변경 시:
+    //    · STL 메쉬의 PointerDragBehavior detach/attach
+    //    · support 메쉬의 isPickable 토글
+    useEffect(() => {
+      for (const [id, mesh] of meshMapRef.current) {
+        const drag = dragBehaviorMapRef.current.get(id);
+        if (!drag) continue;
+        const attached = mesh.behaviors.includes(drag);
+        if (editMode === "support" && attached) {
+          mesh.removeBehavior(drag);
+        } else if (editMode === "select" && !attached) {
+          mesh.addBehavior(drag);
+        }
+      }
+      for (const sm of supportMeshMapRef.current.values()) {
+        sm.isPickable = editMode === "support";
+      }
+    }, [editMode, files, supports]);
+
+    // 5) 외부 ref API
+    useImperativeHandle(
+      ref,
+      () => ({
+        setView(preset) {
+          const camera = cameraRef.current;
+          if (!camera) return;
+          applyViewPreset(camera, preset);
+        },
+        fit() {
+          const camera = cameraRef.current;
+          if (!camera) return;
+          const meshes = Array.from(meshMapRef.current.values());
+          if (meshes.length > 0) {
+            frameCameraToMeshes(camera, meshes);
+          } else {
+            resetCameraOnPlate(camera, plateWRef.current, plateDRef.current);
+          }
+        },
+        previewTransform(id, t) {
+          const mesh = meshMapRef.current.get(id);
+          if (mesh) applyTransformToMesh(mesh, t);
+        },
+        generateAutoSupports(projectId, params) {
+          const scene = sceneRef.current;
+          if (!scene) return [];
+          const out: SupportPointV2[] = [];
+          const all = Array.from(meshMapRef.current.entries());
+          for (const [stlId, mesh] of all) {
+            const others = all
+              .filter(([id]) => id !== stlId)
+              .map(([, m]) => m);
+            const pts = autoGenerateSupportPoints(
+              scene,
+              mesh,
+              others,
+              params,
+              projectId,
+              stlId,
+            );
+            out.push(...pts);
+          }
+          return out;
+        },
+        exportStl() {
+          const stl = Array.from(meshMapRef.current.values());
+          const supports = Array.from(supportMeshMapRef.current.values());
+          if (stl.length === 0) return null;
+          return meshesToStlBlob([...stl, ...supports]);
+        },
+        getSliceMask(sliceY, widthPx, heightPx) {
+          const polys = [];
+          for (const mesh of meshMapRef.current.values()) {
+            const segs = sliceMeshAtY(mesh, sliceY);
+            polys.push(...chainSegments(segs));
+          }
+          for (const sm of supportMeshMapRef.current.values()) {
+            const segs = sliceMeshAtY(sm, sliceY);
+            polys.push(...chainSegments(segs));
+          }
+          return rasterizePolygons(polys, {
+            widthPx,
+            heightPx,
+            plateWidthMm: plateWRef.current,
+            plateDepthMm: plateDRef.current,
+          });
+        },
+        getSceneTopY() {
+          let top = 0;
+          for (const mesh of meshMapRef.current.values()) {
+            mesh.computeWorldMatrix(true);
+            const y = mesh.getBoundingInfo().boundingBox.maximumWorld.y;
+            if (y > top) top = y;
+          }
+          for (const sm of supportMeshMapRef.current.values()) {
+            sm.computeWorldMatrix(true);
+            const y = sm.getBoundingInfo().boundingBox.maximumWorld.y;
+            if (y > top) top = y;
+          }
+          return top;
+        },
+        getBuildVolumeMm3() {
+          let model = 0;
+          for (const mesh of meshMapRef.current.values()) {
+            model += computeMeshVolumeMm3(mesh);
+          }
+          let support = 0;
+          for (const sm of supportMeshMapRef.current.values()) {
+            support += computeMeshVolumeMm3(sm);
+          }
+          return { model, support };
+        },
+        autoRouteBridge(base, contact, cps, excludeStlIds) {
+          const SAFETY_MM = 5;
+          const excluded = new Set(excludeStlIds);
+          const candidates: Mesh[] = [];
+          for (const [id, m] of meshMapRef.current) {
+            if (!excluded.has(id)) candidates.push(m);
+          }
+          if (candidates.length === 0) return cps;
+
+          // 경로 4 segment 가 어느 한 STL 과라도 교차하는지 검사.
+          const path = [
+            new Vector3(base[0], base[1], base[2]),
+            new Vector3(cps[0][0], cps[0][1], cps[0][2]),
+            new Vector3(cps[1][0], cps[1][1], cps[1][2]),
+            new Vector3(cps[2][0], cps[2][1], cps[2][2]),
+            new Vector3(contact[0], contact[1], contact[2]),
+          ];
+          let collides = false;
+          for (let i = 0; i < path.length - 1 && !collides; i++) {
+            const dir = path[i + 1].subtract(path[i]);
+            const len = dir.length();
+            if (len < 1e-6) continue;
+            dir.scaleInPlace(1 / len);
+            const ray = new Ray(path[i], dir, len);
+            for (const mesh of candidates) {
+              const hit = mesh.intersects(ray, false);
+              if (hit.hit) {
+                collides = true;
+                break;
+              }
+            }
+          }
+          if (!collides) return cps;
+
+          // 충분히 높은 시작점에서 각 변곡점 (X, Z) 으로 -Y ray.
+          // 그 위치의 가장 가까운 STL 상단 + SAFETY 로 lift.
+          let maxY = 0;
+          for (const mesh of candidates) {
+            mesh.computeWorldMatrix(true);
+            const y = mesh.getBoundingInfo().boundingBox.maximumWorld.y;
+            if (y > maxY) maxY = y;
+          }
+          const startY = maxY + 100;
+
+          const liftCp = (cp: [number, number, number]): [number, number, number] => {
+            const origin = new Vector3(cp[0], startY, cp[2]);
+            const ray = new Ray(origin, new Vector3(0, -1, 0), startY);
+            let surfaceY = 0;
+            for (const mesh of candidates) {
+              const hit = mesh.intersects(ray, false);
+              if (hit.hit && hit.pickedPoint && hit.pickedPoint.y > surfaceY) {
+                surfaceY = hit.pickedPoint.y;
+              }
+            }
+            return [cp[0], Math.max(cp[1], surfaceY + SAFETY_MM), cp[2]];
+          };
+
+          return [liftCp(cps[0]), liftCp(cps[1]), liftCp(cps[2])];
+        },
+        findSurfaceBelow(x, z, startY, excludeStlIds) {
+          const excluded = new Set(excludeStlIds);
+          const candidates: Mesh[] = [];
+          for (const [id, m] of meshMapRef.current) {
+            if (!excluded.has(id)) candidates.push(m);
+          }
+          if (candidates.length === 0) return 0;
+
+          const origin = new Vector3(x, startY, z);
+          const ray = new Ray(origin, new Vector3(0, -1, 0), startY);
+          let bestY = 0;
+          for (const mesh of candidates) {
+            const hit = mesh.intersects(ray, false);
+            if (hit.hit && hit.pickedPoint && hit.pickedPoint.y > bestY) {
+              bestY = hit.pickedPoint.y;
+            }
+          }
+          return bestY;
+        },
+      }),
+      [],
+    );
+
+    return (
+      <canvas
+        ref={canvasRef}
+        className={`w-full h-full outline-none ${className}`}
+        style={{ display: "block" }}
+      />
+    );
+  },
+);
+
+export default BabylonScene;

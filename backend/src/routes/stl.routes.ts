@@ -50,6 +50,9 @@ router.put('/:stlId/visibility', stlController.updateVisibility);
 // STL Transform 업데이트
 router.put('/:stlId/transform', stlController.updateTransform);
 
+// STL 파일 복제 (Copy & Paste)
+router.post('/:stlId/duplicate', stlController.duplicateSTLFile);
+
 // STL 파일 삭제
 router.delete('/:stlId', stlController.deleteSTLFile);
 

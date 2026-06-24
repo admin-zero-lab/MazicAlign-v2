@@ -1,5 +1,5 @@
-import type { User } from '@types/auth.types';
-import { UserRole } from '@types/auth.types';
+import type { User } from '@apptypes/auth.types';
+import { UserRole } from '@apptypes/auth.types';
 
 /**
  * 로컬 고정 유저 (인터넷 불필요, 인증 없이 바로 사용)

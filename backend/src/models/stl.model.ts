@@ -48,6 +48,8 @@ export interface AdjustmentLog {
   timestamp: Date;
   adjustmentType: AdjustmentType;
   deltaValue: DeltaValue;
+  /** 이 조정이 적용된 직후의 전체 변환 스냅샷 (Undo/Redo 복원용) */
+  transform: Transform;
 }
 
 export interface CreateSTLFileData {
@@ -63,4 +65,6 @@ export interface CreateAdjustmentLogData {
   userId: string;
   adjustmentType: AdjustmentType;
   deltaValue: DeltaValue;
+  /** 조정 후의 전체 변환 스냅샷 */
+  transform: Transform;
 }
