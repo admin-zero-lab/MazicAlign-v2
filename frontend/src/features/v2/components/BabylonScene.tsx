@@ -313,6 +313,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     const bridgeCpMeshesRef = useRef<Mesh[]>([]);
     const bridgeCpMatRef = useRef<StandardMaterial | null>(null);
     const bridgeBMatRef = useRef<StandardMaterial | null>(null); // B 끝점 (청록)
+    // PositionGizmo 가 부착된 Bridge sphere (변곡점 또는 끝점).
+    const selectedBridgeSphereRef = useRef<Mesh | null>(null);
     const sliceModelMatRef = useRef<ReturnType<
       typeof createSliceFillMaterial
     > | null>(null);
@@ -328,6 +330,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     const gizmoDragStartRef = useRef<
       | { kind: "stl"; id: string; t: TransformV2 }
       | { kind: "support"; id: string }
+      | { kind: "bridge-cp"; id: string; cpIdx: number }
+      | { kind: "bridge-ep"; id: string; which: "base" | "contact" }
       | null
     >(null);
     const gizmoModeRef = useRef<GizmoMode>(gizmoMode);
@@ -431,8 +435,18 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       const sg = scaleGizmoRef.current;
       if (!pg || !rg || !sg) return;
 
-      // 'support' 모드 + 선택된 기둥 → PositionGizmo 만 기둥에 attach.
+      // 'support' 모드:
+      //   · Bridge 변곡점/끝점 sphere 선택됨 → PositionGizmo 가 그 sphere
+      //     X/Y/Z 축으로 깊이 방향 정확 드래그 가능.
+      //   · 그 외 + 단점 서포트 기둥 선택 → 기둥에 attach.
       if (editModeRef.current === "support") {
+        const handleMesh = selectedBridgeSphereRef.current;
+        if (handleMesh) {
+          pg.attachedMesh = handleMesh;
+          rg.attachedMesh = null;
+          sg.attachedMesh = null;
+          return;
+        }
         const sid = selectedSupportRef.current;
         const sMesh = sid ? supportMeshMapRef.current.get(sid) ?? null : null;
         pg.attachedMesh = sMesh;
@@ -587,11 +601,41 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       scaleGizmo.scaleRatio = SCALE;
 
       const onDragStart = () => {
-        // PositionGizmo 가 support mesh 에 붙어있으면 support 이동 모드.
         const attached = positionGizmo.attachedMesh;
         if (attached) {
-          const meta = (attached as { metadata?: { type?: string; supportId?: string } })
-            .metadata;
+          const meta = (
+            attached as {
+              metadata?: {
+                type?: string;
+                supportId?: string;
+                cpIdx?: number;
+                which?: "base" | "contact";
+              };
+            }
+          ).metadata;
+          // Bridge 변곡점 sphere 드래그.
+          if (
+            meta?.type === "bridge-cp" &&
+            meta.supportId &&
+            typeof meta.cpIdx === "number"
+          ) {
+            gizmoDragStartRef.current = {
+              kind: "bridge-cp",
+              id: meta.supportId,
+              cpIdx: meta.cpIdx,
+            };
+            return;
+          }
+          // Bridge 끝점 sphere 드래그.
+          if (meta?.type === "bridge-ep" && meta.supportId && meta.which) {
+            gizmoDragStartRef.current = {
+              kind: "bridge-ep",
+              id: meta.supportId,
+              which: meta.which,
+            };
+            return;
+          }
+          // 단점 서포트 기둥 이동.
           if (meta?.type === "support" && meta.supportId) {
             gizmoDragStartRef.current = {
               kind: "support",
@@ -616,6 +660,35 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         const started = gizmoDragStartRef.current;
         gizmoDragStartRef.current = null;
         if (!started) return;
+        if (started.kind === "bridge-cp") {
+          const sphere = selectedBridgeSphereRef.current;
+          if (!sphere) return;
+          onMoveBridgeCpRef.current(started.id, started.cpIdx, [
+            sphere.position.x,
+            sphere.position.y,
+            sphere.position.z,
+          ]);
+          return;
+        }
+        if (started.kind === "bridge-ep") {
+          const sphere = selectedBridgeSphereRef.current;
+          if (!sphere) return;
+          const meta = (
+            sphere as {
+              metadata?: { normal?: [number, number, number] };
+            }
+          ).metadata;
+          const stored = undoLift(
+            {
+              x: sphere.position.x,
+              y: sphere.position.y,
+              z: sphere.position.z,
+            },
+            meta?.normal,
+          );
+          onMoveBridgeEndpointRef.current(started.id, started.which, stored);
+          return;
+        }
         if (started.kind === "support") {
           const sMesh = supportMeshMapRef.current.get(started.id);
           if (!sMesh) return;
@@ -713,6 +786,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           const bridge = bridgeModeRef.current;
 
           if (!picked) {
+            selectedBridgeSphereRef.current = null;
+            syncGizmo();
             if (!bridge) onPickSupportRef.current(null);
             return;
           }
@@ -727,20 +802,34 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
             }
           ).metadata;
 
-          // 변곡점 sphere 단일 클릭 → 선택 (Delete 키로 제거).
+          // 변곡점 sphere 단일 클릭 → 선택 + PositionGizmo 부착.
           if (
             meta?.type === "bridge-cp" &&
             meta.supportId &&
             typeof meta.cpIdx === "number"
           ) {
+            selectedBridgeSphereRef.current = picked as Mesh;
+            syncGizmo();
             onSelectBridgeControlPointRef.current?.(
               meta.supportId,
               meta.cpIdx,
             );
             return;
           }
+          // 끝점 sphere 단일 클릭 → PositionGizmo 부착.
+          if (
+            meta?.type === "bridge-ep" &&
+            meta.supportId &&
+            (meta as { which?: string }).which
+          ) {
+            selectedBridgeSphereRef.current = picked as Mesh;
+            syncGizmo();
+            return;
+          }
 
           if (meta?.type === "support" && meta.supportId) {
+            // 변곡점/끝점 sphere 부착됐던 PositionGizmo 해제.
+            selectedBridgeSphereRef.current = null;
             // Bridge 모드 → 기둥 위 hit point 를 새 endpoint 로.
             // 기둥 표면 안쪽으로 normal × PEN 만큼 push → Bridge↔Bridge
             // 연결 시 void 제거. PEN 은 기둥 반지름의 70% 이하 (양면
@@ -1236,20 +1325,12 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         sphere.material = ep.mat;
         sphere.isPickable = true;
         sphere.renderingGroupId = 1;
-        const drag = new PointerDragBehavior();
-        drag.useObjectOrientationForDragging = false;
-        sphere.addBehavior(drag);
-        const which = ep.which;
-        const epNormal = ep.normal;
-        drag.onDragEndObservable.add(() => {
-          // 드래그된 sphere 위치 (표면 밖) → normal 만큼 안쪽으로
-          // 되돌려 저장. normal 이 없으면 그대로.
-          const stored = undoLift(
-            { x: sphere.position.x, y: sphere.position.y, z: sphere.position.z },
-            epNormal,
-          );
-          onMoveBridgeEndpointRef.current(sup.id, which, stored);
-        });
+        sphere.metadata = {
+          type: "bridge-ep",
+          supportId: sup.id,
+          which: ep.which,
+          normal: ep.normal,
+        };
         bridgeCpMeshesRef.current.push(sphere);
       }
 
@@ -1270,20 +1351,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
             supportId: sup.id,
             cpIdx: i,
           };
-          const drag = new PointerDragBehavior();
-          drag.useObjectOrientationForDragging = false;
-          sphere.addBehavior(drag);
-          const idx = i;
-          drag.onDragEndObservable.add(() => {
-            onMoveBridgeCpRef.current(sup.id, idx, [
-              sphere.position.x,
-              sphere.position.y,
-              sphere.position.z,
-            ]);
-          });
           bridgeCpMeshesRef.current.push(sphere);
         }
       }
+      // 변곡점/끝점 sphere drag = PositionGizmo (syncGizmo + onDragStart/End).
     }, [
       editMode,
       bridgeMode,
