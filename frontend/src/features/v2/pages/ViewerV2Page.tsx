@@ -359,16 +359,40 @@ const ViewerV2Page: React.FC = () => {
     async (supportId: string) => {
       const target = supports.find((s) => s.id === supportId);
       if (!target) return;
-      await supportRepo.deleteSupport(supportId);
+      // Bridge↔Bridge cascade — 부모 삭제 시 그 위에 부착된 child
+      // (contactAttachedTo / baseAttachedTo 가 부모를 가리킴) 들도
+      // 함께 삭제. grand-child 까지 재귀로.
+      const cascadeIds = new Set<string>([supportId]);
+      let added = true;
+      while (added) {
+        added = false;
+        for (const s of supports) {
+          if (cascadeIds.has(s.id)) continue;
+          const cId = s.contactAttachedTo?.supportId;
+          const bId = s.baseAttachedTo?.supportId;
+          if ((cId && cascadeIds.has(cId)) || (bId && cascadeIds.has(bId))) {
+            cascadeIds.add(s.id);
+            added = true;
+          }
+        }
+      }
+      const removed = supports.filter((s) => cascadeIds.has(s.id));
+      for (const id of cascadeIds) {
+        await supportRepo.deleteSupport(id);
+      }
       await refreshSupports();
-      if (selectedSupportId === supportId) setSelectedSupportId(null);
+      if (selectedSupportId && cascadeIds.has(selectedSupportId)) {
+        setSelectedSupportId(null);
+      }
       useUndoStore.getState().push({
         label: "remove-support",
         undo: async () => {
-          await addSupports([target]);
+          await addSupports(removed);
         },
         redo: async () => {
-          await supportRepo.deleteSupport(supportId);
+          for (const id of cascadeIds) {
+            await supportRepo.deleteSupport(id);
+          }
           await refreshSupports();
         },
       });
