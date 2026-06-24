@@ -901,20 +901,6 @@ const ViewerV2Page: React.FC = () => {
         (s) => s.stlId === id || s.baseStlId === id,
       );
 
-      // 디버그: 어느 서포트가 영향 받는지 확인.
-      console.log("[transform-commit]", {
-        stlId: id,
-        totalSupports: supports.length,
-        affectedCount: affected.length,
-        bridges: supports
-          .filter((s) => s.source === "bridge")
-          .map((s) => ({
-            id: s.id.slice(0, 6),
-            stlId: s.stlId.slice(0, 6),
-            baseStlId: s.baseStlId?.slice(0, 6),
-            cpsLen: s.curveControlPoints?.length ?? 0,
-          })),
-      });
 
       type CpsArr = [number, number, number][];
       type SupportPatch = {
@@ -1016,6 +1002,21 @@ const ViewerV2Page: React.FC = () => {
           cps: p.curveControlPoints,
         });
       }
+
+      // 디버그: patch 전후 좌표 확인.
+      console.log(
+        "[transform-commit] patches",
+        newPatches.map((np, i) => ({
+          id: np.id.slice(0, 6),
+          oldBase: affected[i].base.map((n) => n.toFixed(1)).join(","),
+          newBase: np.patch.base.map((n) => n.toFixed(1)).join(","),
+          oldContact: affected[i].contact.map((n) => n.toFixed(1)).join(","),
+          newContact: np.patch.contact.map((n) => n.toFixed(1)).join(","),
+          cpsChanged:
+            JSON.stringify(affected[i].curveControlPoints) !==
+            JSON.stringify(np.patch.curveControlPoints),
+        })),
+      );
 
       void (async () => {
         await Promise.all(
