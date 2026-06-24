@@ -67,6 +67,12 @@ const ViewerV2Page: React.FC = () => {
     patchSupport,
   } = useSupportsV2(projectId);
 
+  // supports closure 가 stale 일 때 항상 최신 값을 보기 위한 ref.
+  // handleCommitTransform / followAttachedChildren 등 비동기 콜백에서
+  // 사용.
+  const supportsRef = useRef(supports);
+  supportsRef.current = supports;
+
   const [browserOpen, setBrowserOpen] = useState(false);
   const [panelTab, setPanelTab] = useState<"transform" | "support">(
     "transform",
@@ -418,7 +424,8 @@ const ViewerV2Page: React.FC = () => {
         | undefined,
       parentContact: [number, number, number],
     ) => {
-      const children = supports.filter(
+      // closure stale 방지: 최신 supports 사용.
+      const children = supportsRef.current.filter(
         (s) =>
           s.contactAttachedTo?.supportId === parentId ||
           s.baseAttachedTo?.supportId === parentId,
@@ -906,8 +913,9 @@ const ViewerV2Page: React.FC = () => {
       //   Bridge   : 자기 쪽 끝점만 변환 + 변곡점은 끝점 비례 이동.
       //
       // 영향 받는 서포트: stlId == id (contact 쪽) 또는 baseStlId == id
-      // (Bridge base 쪽).
-      const affected = supports.filter(
+      // (Bridge base 쪽). closure stale 방지 위해 ref 사용.
+      const currentSupports = supportsRef.current;
+      const affected = currentSupports.filter(
         (s) => s.stlId === id || s.baseStlId === id,
       );
 
@@ -1030,7 +1038,8 @@ const ViewerV2Page: React.FC = () => {
             bStl: s.baseStlId?.slice(0, 6),
           })),
         follows: follows.length,
-        allChildren: supports
+        supportsLen: currentSupports.length,
+        allChildren: currentSupports
           .filter(
             (s) =>
               s.contactAttachedTo?.supportId || s.baseAttachedTo?.supportId,
