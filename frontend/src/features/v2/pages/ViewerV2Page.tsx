@@ -680,20 +680,35 @@ const ViewerV2Page: React.FC = () => {
   );
 
   const handleDeleteSelectedSupport = useCallback(() => {
-    if (editMode !== "support") return;
-    // 변곡점이 선택돼 있으면 그것 우선 제거.
-    if (selectedCp) {
-      void handleRemoveBridgeControlPoint(selectedCp.supportId, selectedCp.idx);
+    // Support 모드: 변곡점 > 서포트 순으로 제거.
+    if (editMode === "support") {
+      if (selectedCp) {
+        void handleRemoveBridgeControlPoint(
+          selectedCp.supportId,
+          selectedCp.idx,
+        );
+        return;
+      }
+      if (!selectedSupportId) return;
+      void handleRemoveSupport(selectedSupportId);
       return;
     }
-    if (!selectedSupportId) return;
-    void handleRemoveSupport(selectedSupportId);
+    // Select 모드: 선택된 STL 들 모두 제거.
+    if (editMode === "select" && selectedIds.size > 0) {
+      const ids = Array.from(selectedIds);
+      setSelectedIds(new Set());
+      void (async () => {
+        for (const id of ids) await removeStlFile(id);
+      })();
+    }
   }, [
     editMode,
     selectedSupportId,
     selectedCp,
+    selectedIds,
     handleRemoveSupport,
     handleRemoveBridgeControlPoint,
+    removeStlFile,
   ]);
 
   // 선택된 Bridge 의 변곡점 3 개를 base→contact 직선상 균등 분할
