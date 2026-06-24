@@ -948,26 +948,20 @@ const ViewerV2Page: React.FC = () => {
           : undefined;
 
         if (isBridge && sup.curveControlPoints) {
-          const dC: [number, number, number] = [
-            newContact[0] - sup.contact[0],
-            newContact[1] - sup.contact[1],
-            newContact[2] - sup.contact[2],
-          ];
-          const dB: [number, number, number] = [
-            newBase[0] - sup.base[0],
-            newBase[1] - sup.base[1],
-            newBase[2] - sup.base[2],
-          ];
+          // 변곡점도 STL local 좌표로 부착 처리 → 회전 + 평행이동 모두
+          // 따라감. t 비율로 base/contact 쪽 STL 결정 (양 끝이 같은
+          // STL 이면 어느 분기든 결과 같음). 어느 쪽도 변환 대상 아니면
+          // 그대로 (다른 STL transform 영향 X).
           const cps = sup.curveControlPoints;
           const nn = cps.length;
           newCps = cps.map((cp, i): [number, number, number] => {
             const t = (i + 1) / (nn + 1);
-            const w0 = 1 - t;
-            return [
-              cp[0] + dB[0] * w0 + dC[0] * t,
-              cp[1] + dB[1] * w0 + dC[1] * t,
-              cp[2] + dB[2] * w0 + dC[2] * t,
-            ];
+            const useBaseSide = t < 0.5;
+            const stlSide = useBaseSide ? baseSide : contactSide;
+            if (stlSide) {
+              return transformPointBetween(cp, start, end);
+            }
+            return cp;
           });
         }
 
