@@ -918,13 +918,17 @@ const ViewerV2Page: React.FC = () => {
         // 단점/auto 는 base 가 빌드플레이트 (또는 다른 STL 상단) 라
         // 회전을 함께 적용하면 비스듬해진다.
         const baseSide = sup.baseStlId === id;
+        // sub Bridge (부모 Bridge 위에 부착) 의 끝점은 affected loop
+        // 에서 transform 안 함. follow 가 부모 path 위 t 위치로 처리.
+        const contactAttached = !!sup.contactAttachedTo?.supportId;
+        const baseAttached = !!sup.baseAttachedTo?.supportId;
 
-        const newContact = contactSide
+        const newContact = contactSide && !contactAttached
           ? transformPointBetween(sup.contact, start, end)
           : sup.contact;
         let newBase: [number, number, number];
         if (isBridge) {
-          newBase = baseSide
+          newBase = baseSide && !baseAttached
             ? transformPointBetween(sup.base, start, end)
             : sup.base;
         } else if (contactSide) {
@@ -950,16 +954,16 @@ const ViewerV2Page: React.FC = () => {
 
         if (isBridge && sup.curveControlPoints) {
           // 변곡점도 STL local 좌표로 부착 처리 → 회전 + 평행이동 모두
-          // 따라감. t 비율로 base/contact 쪽 STL 결정 (양 끝이 같은
-          // STL 이면 어느 분기든 결과 같음). 어느 쪽도 변환 대상 아니면
-          // 그대로 (다른 STL transform 영향 X).
+          // 따라감. t 비율로 base/contact 쪽 결정. attached 쪽이면
+          // follow 단계가 처리하므로 여기서는 skip.
           const cps = sup.curveControlPoints;
           const nn = cps.length;
           newCps = cps.map((cp, i): [number, number, number] => {
             const t = (i + 1) / (nn + 1);
             const useBaseSide = t < 0.5;
             const stlSide = useBaseSide ? baseSide : contactSide;
-            if (stlSide) {
+            const attached = useBaseSide ? baseAttached : contactAttached;
+            if (stlSide && !attached) {
               return transformPointBetween(cp, start, end);
             }
             return cp;
@@ -1002,21 +1006,6 @@ const ViewerV2Page: React.FC = () => {
           cps: p.curveControlPoints,
         });
       }
-
-      // 디버그: patch 전후 좌표 확인.
-      console.log(
-        "[transform-commit] patches",
-        newPatches.map((np, i) => ({
-          id: np.id.slice(0, 6),
-          oldBase: affected[i].base.map((n) => n.toFixed(1)).join(","),
-          newBase: np.patch.base.map((n) => n.toFixed(1)).join(","),
-          oldContact: affected[i].contact.map((n) => n.toFixed(1)).join(","),
-          newContact: np.patch.contact.map((n) => n.toFixed(1)).join(","),
-          cpsChanged:
-            JSON.stringify(affected[i].curveControlPoints) !==
-            JSON.stringify(np.patch.curveControlPoints),
-        })),
-      );
 
       void (async () => {
         await Promise.all(
