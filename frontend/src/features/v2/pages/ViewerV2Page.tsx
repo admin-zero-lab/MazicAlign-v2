@@ -430,12 +430,6 @@ const ViewerV2Page: React.FC = () => {
           s.contactAttachedTo?.supportId === parentId ||
           s.baseAttachedTo?.supportId === parentId,
       );
-      console.log("[follow]", {
-        parent: parentId.slice(0, 6),
-        children: children.length,
-        parentBase: parentBase.map((n) => n.toFixed(1)).join(","),
-        parentContact: parentContact.map((n) => n.toFixed(1)).join(","),
-      });
       for (const child of children) {
         const updates: Parameters<typeof patchSupport>[1] = {};
         const newContact =
@@ -936,17 +930,16 @@ const ViewerV2Page: React.FC = () => {
         // 단점/auto 는 base 가 빌드플레이트 (또는 다른 STL 상단) 라
         // 회전을 함께 적용하면 비스듬해진다.
         const baseSide = sup.baseStlId === id;
-        // sub Bridge (부모 Bridge 위에 부착) 의 끝점은 affected loop
-        // 에서 transform 안 함. follow 가 부모 path 위 t 위치로 처리.
-        const contactAttached = !!sup.contactAttachedTo?.supportId;
-        const baseAttached = !!sup.baseAttachedTo?.supportId;
 
-        const newContact = contactSide && !contactAttached
+        // main/sub 통합: 모든 Bridge endpoint 를 STL transform 적용.
+        // sub Bridge 의 attached 끝점은 follow 단계에서 부모 path 위
+        // 정확한 t 위치로 다시 덮어씀 → 일관된 최종 좌표.
+        const newContact = contactSide
           ? transformPointBetween(sup.contact, start, end)
           : sup.contact;
         let newBase: [number, number, number];
         if (isBridge) {
-          newBase = baseSide && !baseAttached
+          newBase = baseSide
             ? transformPointBetween(sup.base, start, end)
             : sup.base;
         } else if (contactSide) {
@@ -971,17 +964,15 @@ const ViewerV2Page: React.FC = () => {
           : undefined;
 
         if (isBridge && sup.curveControlPoints) {
-          // 변곡점도 STL local 좌표로 부착 처리 → 회전 + 평행이동 모두
-          // 따라감. t 비율로 base/contact 쪽 결정. attached 쪽이면
-          // follow 단계가 처리하므로 여기서는 skip.
+          // 변곡점도 STL local 좌표로 부착. main/sub 동일 처리. sub 의
+          // 경우 follow 가 부모 path 따라 다시 보정.
           const cps = sup.curveControlPoints;
           const nn = cps.length;
           newCps = cps.map((cp, i): [number, number, number] => {
             const t = (i + 1) / (nn + 1);
             const useBaseSide = t < 0.5;
             const stlSide = useBaseSide ? baseSide : contactSide;
-            const attached = useBaseSide ? baseAttached : contactAttached;
-            if (stlSide && !attached) {
+            if (stlSide) {
               return transformPointBetween(cp, start, end);
             }
             return cp;
@@ -1025,31 +1016,6 @@ const ViewerV2Page: React.FC = () => {
         });
       }
 
-      console.log("[xform]", {
-        stl: id.slice(0, 6),
-        affected: affected.length,
-        bridges: affected
-          .filter((s) => s.source === "bridge")
-          .map((s) => ({
-            id: s.id.slice(0, 6),
-            cAtt: s.contactAttachedTo?.supportId?.slice(0, 6),
-            bAtt: s.baseAttachedTo?.supportId?.slice(0, 6),
-            stl: s.stlId.slice(0, 6),
-            bStl: s.baseStlId?.slice(0, 6),
-          })),
-        follows: follows.length,
-        supportsLen: currentSupports.length,
-        allChildren: currentSupports
-          .filter(
-            (s) =>
-              s.contactAttachedTo?.supportId || s.baseAttachedTo?.supportId,
-          )
-          .map((s) => ({
-            id: s.id.slice(0, 6),
-            cAtt: s.contactAttachedTo?.supportId?.slice(0, 6),
-            bAtt: s.baseAttachedTo?.supportId?.slice(0, 6),
-          })),
-      });
 
       void (async () => {
         await Promise.all(
