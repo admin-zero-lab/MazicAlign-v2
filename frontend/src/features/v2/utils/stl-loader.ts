@@ -57,6 +57,13 @@ export async function loadStlIntoScene(
   //      아니면 추가 회전. 1.5× 임계로 대칭 모델 (cube 등) 보호.
   autoOrientUpright(mesh);
 
+  // 1.7) bakeCurrentTransformIntoVertices 는 vertex position 만 회전
+  //      적용하고 normal 은 그대로 둔다. 위 두 회전 후 normal 이
+  //      옛 좌표 기준이라 Bridge / 단점 픽의 normal 이 잘못된 방향으로
+  //      향함 → contact push 가 외부로 → Bridge 가 모델 밖으로 튀어
+  //      나가는 증상. 모든 회전 baked 직후 normal 재계산.
+  mesh.createNormals(true);
+
   // 2) 빌드플레이트에 정렬 (XZ center, Y base=liftMm).
   alignMeshToPlate(mesh, liftMm);
 
