@@ -913,16 +913,33 @@ const ViewerV2Page: React.FC = () => {
       for (const sup of affected) {
         const isBridge = sup.source === "bridge";
         const contactSide = sup.stlId === id;
-        // 단점/auto 는 baseStlId 가 없으니 contact 쪽이 움직이면 base 도 함께.
-        const baseSide =
-          sup.baseStlId === id || (!isBridge && contactSide);
+        // Bridge 는 base 도 다른 STL 에 부착돼있어 양쪽 따라가지만,
+        // 단점/auto 는 base 가 빌드플레이트 (또는 다른 STL 상단) 라
+        // 회전을 함께 적용하면 비스듬해진다.
+        const baseSide = sup.baseStlId === id;
 
         const newContact = contactSide
           ? transformPointBetween(sup.contact, start, end)
           : sup.contact;
-        const newBase = baseSide
-          ? transformPointBetween(sup.base, start, end)
-          : sup.base;
+        let newBase: [number, number, number];
+        if (isBridge) {
+          newBase = baseSide
+            ? transformPointBetween(sup.base, start, end)
+            : sup.base;
+        } else if (contactSide) {
+          // 단점/auto: contact 는 모델 따라 이동, base 는 새 contact 의
+          // 수직 아래 (자기 모델 제외하고 가장 가까운 표면 또는 Y=0).
+          const groundY =
+            sceneHandleRef.current?.findSurfaceBelow(
+              newContact[0],
+              newContact[2],
+              newContact[1] - 0.01,
+              [sup.stlId],
+            ) ?? 0;
+          newBase = [newContact[0], groundY, newContact[2]];
+        } else {
+          newBase = sup.base;
+        }
 
         let newCps: CpsArr | undefined = sup.curveControlPoints
           ? sup.curveControlPoints.map(
