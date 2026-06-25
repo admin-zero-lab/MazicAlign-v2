@@ -103,3 +103,46 @@ export function makeZipStore(entries: ZipEntry[]): Blob {
 
   return new Blob([...chunks, ...central, eocd], { type: "application/zip" });
 }
+
+/**
+ * STORE 방식 ZIP 만 디코드 (deflate 미지원). makeZipStore 가 만든
+ * 파일 또는 동등하게 STORE 만 사용한 ZIP 을 unzip 한다.
+ *
+ * 단순화: 각 local file header 를 0x04034b50 시그니처로 찾아 순회.
+ * EOCD / central directory 는 무시.
+ */
+export async function unzipStore(blob: Blob): Promise<ZipEntry[]> {
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  const dec = new TextDecoder();
+  const entries: ZipEntry[] = [];
+  let i = 0;
+  while (i + 30 <= buf.length) {
+    const sig =
+      buf[i] | (buf[i + 1] << 8) | (buf[i + 2] << 16) | (buf[i + 3] << 24);
+    // 0x04034b50 (local file header)
+    if (sig !== 0x04034b50) break;
+    const view = new DataView(
+      buf.buffer,
+      buf.byteOffset + i,
+      Math.min(30, buf.length - i),
+    );
+    const method = view.getUint16(8, true);
+    const compSize = view.getUint32(18, true);
+    const uncompSize = view.getUint32(22, true);
+    const nameLen = view.getUint16(26, true);
+    const extraLen = view.getUint16(28, true);
+    if (method !== 0) {
+      throw new Error(`ZIP method ${method} 미지원 (STORE 만 지원)`);
+    }
+    const nameStart = i + 30;
+    const dataStart = nameStart + nameLen + extraLen;
+    const name = dec.decode(buf.subarray(nameStart, nameStart + nameLen));
+    const data = buf.slice(dataStart, dataStart + compSize);
+    if (data.length !== uncompSize) {
+      throw new Error(`ZIP STORE 크기 불일치: ${name}`);
+    }
+    entries.push({ name, data });
+    i = dataStart + compSize;
+  }
+  return entries;
+}

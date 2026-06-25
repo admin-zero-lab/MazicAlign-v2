@@ -29,6 +29,7 @@ import EditModeControls, {
   type EditMode,
 } from "../components/EditModeControls";
 import SliceSidePanel from "../components/SliceSidePanel";
+import GithubProjectDialog from "../components/GithubProjectDialog";
 import PrinterProfileSelect from "../components/PrinterProfileSelect";
 import PrinterProfileDialog from "../components/PrinterProfileDialog";
 import { useCurrentProfile } from "../hooks/usePrinterProfileStore";
@@ -74,6 +75,7 @@ const ViewerV2Page: React.FC = () => {
   supportsRef.current = supports;
 
   const [browserOpen, setBrowserOpen] = useState(false);
+  const [ghDialog, setGhDialog] = useState<"save" | "load" | null>(null);
   const [panelTab, setPanelTab] = useState<"transform" | "support">(
     "transform",
   );
@@ -1202,6 +1204,21 @@ const ViewerV2Page: React.FC = () => {
               STL 내보내기
             </button>
             <button
+              onClick={() => setGhDialog("save")}
+              disabled={!projectId}
+              className="px-3 py-1 text-sm text-primary-700 border border-primary-600 rounded hover:bg-primary-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              title="현재 프로젝트 전체 (STL + 서포트 + 변환) 를 GitHub 에 저장"
+            >
+              GitHub 저장
+            </button>
+            <button
+              onClick={() => setGhDialog("load")}
+              className="px-3 py-1 text-sm text-primary-700 border border-primary-600 rounded hover:bg-primary-50 transition-colors"
+              title="GitHub 에서 저장된 프로젝트 불러오기"
+            >
+              GitHub 불러오기
+            </button>
+            <button
               onClick={() => setBrowserOpen(true)}
               className="px-3 py-1 text-sm bg-primary-600 text-white rounded hover:bg-primary-700 transition-colors"
             >
@@ -1525,6 +1542,18 @@ const ViewerV2Page: React.FC = () => {
       <PrinterProfileDialog
         open={profileDialogOpen}
         onClose={() => setProfileDialogOpen(false)}
+      />
+
+      <GithubProjectDialog
+        open={ghDialog !== null}
+        mode={ghDialog ?? "save"}
+        projectId={projectId}
+        projectName={project?.name}
+        onClose={() => setGhDialog(null)}
+        onLoaded={(newId) => {
+          setGhDialog(null);
+          navigate(`/v2/viewer/${newId}`);
+        }}
       />
 
     </div>

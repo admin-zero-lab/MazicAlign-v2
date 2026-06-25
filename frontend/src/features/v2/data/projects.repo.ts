@@ -119,3 +119,18 @@ export async function deleteProject(id: string): Promise<void> {
     tx.onerror = () => reject(tx.error);
   });
 }
+
+/**
+ * import 용 — 완성된 ProjectV2 객체를 그대로 put.
+ * createProject 는 id / code / timestamp 자동 생성이라 archive 복원
+ * 시 옛 id 보존이 안 되므로 별도 함수.
+ */
+export async function putProject(project: ProjectV2): Promise<void> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_PROJECTS, "readwrite");
+    tx.objectStore(STORE_PROJECTS).put(project);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}

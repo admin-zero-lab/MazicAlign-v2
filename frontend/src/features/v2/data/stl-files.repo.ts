@@ -81,6 +81,20 @@ export async function updateStlFile(
   });
 }
 
+/**
+ * import 용 — 완성된 STLFileV2 객체 그대로 put. id / addedAt / transform
+ * 보존.
+ */
+export async function putStlFile(file: STLFileV2): Promise<void> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_STL_FILES, "readwrite");
+    tx.objectStore(STORE_STL_FILES).put(file);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 export async function deleteStlFile(id: string): Promise<void> {
   const db = await openDb();
   return new Promise((resolve, reject) => {
