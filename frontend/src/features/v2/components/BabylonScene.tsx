@@ -1293,6 +1293,14 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         if (!n) return pos;
         return [pos[0] + n[0] * LIFT, pos[1] + n[1] * LIFT, pos[2] + n[2] * LIFT];
       };
+      // stl-local 좌표 모드의 support 면 sphere 를 STL mesh 의 child 로
+       // 묶어 STL 회전/이동 시 자동 follow. sphere.position 은 이미 local
+       // 좌표가 박혀있으므로 그대로 둔다 (parent 만 바꿈, 위치 보존 X).
+      const attachToStl = (sphere: Mesh, sup: SupportPointV2): void => {
+        if (sup.coordSpace !== "stl-local") return;
+        const stlMesh = meshMapRef.current.get(sup.stlId);
+        if (stlMesh) sphere.parent = stlMesh;
+      };
       const undoLift = (
         pos: { x: number; y: number; z: number },
         n: [number, number, number] | undefined,
@@ -1315,6 +1323,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           aSphere.material = aMat;
           aSphere.isPickable = false;
           aSphere.renderingGroupId = 1;
+          attachToStl(aSphere, sup);
           bridgeCpMeshesRef.current.push(aSphere);
 
           const bPos = liftOut(sup.contact, sup.contactNormal);
@@ -1327,6 +1336,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           bSphere.material = bMat;
           bSphere.isPickable = false;
           bSphere.renderingGroupId = 1;
+          attachToStl(bSphere, sup);
           bridgeCpMeshesRef.current.push(bSphere);
         }
       }
@@ -1367,6 +1377,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           which: ep.which,
           normal: ep.normal,
         };
+        attachToStl(sphere, sup);
         // PointerDragBehavior 도 유지 — sphere 직접 끌면 카메라 평면
         // 자유 드래그. PositionGizmo 의 X/Y/Z 축 화살표는 정확한 깊이
         // 드래그. 둘 다 동시 가능.
@@ -1402,6 +1413,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
             supportId: sup.id,
             cpIdx: i,
           };
+          attachToStl(sphere, sup);
           // PointerDragBehavior 유지 — 자유 드래그. PositionGizmo 도
           // syncGizmo 에서 attach 되어 X/Y/Z 축 정확 드래그 가능.
           const drag = new PointerDragBehavior();
@@ -1423,6 +1435,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       bridgeMode,
       selectedSupportId,
       supports,
+      files,
       supportParams.bridgeDiameterMm,
     ]);
 
