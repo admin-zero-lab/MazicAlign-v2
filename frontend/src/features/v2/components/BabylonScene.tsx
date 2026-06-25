@@ -1331,6 +1331,21 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           which: ep.which,
           normal: ep.normal,
         };
+        // PointerDragBehavior 도 유지 — sphere 직접 끌면 카메라 평면
+        // 자유 드래그. PositionGizmo 의 X/Y/Z 축 화살표는 정확한 깊이
+        // 드래그. 둘 다 동시 가능.
+        const drag = new PointerDragBehavior();
+        drag.useObjectOrientationForDragging = false;
+        sphere.addBehavior(drag);
+        const which = ep.which;
+        const epNormal = ep.normal;
+        drag.onDragEndObservable.add(() => {
+          const stored = undoLift(
+            { x: sphere.position.x, y: sphere.position.y, z: sphere.position.z },
+            epNormal,
+          );
+          onMoveBridgeEndpointRef.current(sup.id, which, stored);
+        });
         bridgeCpMeshesRef.current.push(sphere);
       }
 
@@ -1351,10 +1366,22 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
             supportId: sup.id,
             cpIdx: i,
           };
+          // PointerDragBehavior 유지 — 자유 드래그. PositionGizmo 도
+          // syncGizmo 에서 attach 되어 X/Y/Z 축 정확 드래그 가능.
+          const drag = new PointerDragBehavior();
+          drag.useObjectOrientationForDragging = false;
+          sphere.addBehavior(drag);
+          const idx = i;
+          drag.onDragEndObservable.add(() => {
+            onMoveBridgeCpRef.current(sup.id, idx, [
+              sphere.position.x,
+              sphere.position.y,
+              sphere.position.z,
+            ]);
+          });
           bridgeCpMeshesRef.current.push(sphere);
         }
       }
-      // 변곡점/끝점 sphere drag = PositionGizmo (syncGizmo + onDragStart/End).
     }, [
       editMode,
       bridgeMode,
