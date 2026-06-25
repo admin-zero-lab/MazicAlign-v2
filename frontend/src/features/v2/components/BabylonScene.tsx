@@ -655,6 +655,20 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           id,
           t: readMeshTransform(mesh),
         };
+        // STL drag 중 race 차단: 영향 받는 supports mesh 들을 STL
+        // mesh 의 child 로 임시 설정. drag 진행하는 동안 Babylon 이
+        // world transform 자동 동기 → mesh 가 STL 따라 즉시 움직임.
+        // setParent 는 world 위치 유지하면서 local 좌표 자동 계산.
+        const supports = supportsRef.current;
+        for (const [supId, supMesh] of supportMeshMapRef.current) {
+          const sup = supports.find((s) => s.id === supId);
+          if (
+            sup &&
+            (sup.stlId === id || sup.baseStlId === id)
+          ) {
+            supMesh.setParent(mesh);
+          }
+        }
       };
       const onDragEnd = () => {
         const started = gizmoDragStartRef.current;
@@ -700,6 +714,13 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         }
         const mesh = meshMapRef.current.get(started.id);
         if (!mesh) return;
+        // STL drag 종료 — supports mesh 의 parent 해제. setParent(null)
+        // 은 world transform 유지하면서 parent 만 푸는 안전한 호출.
+        for (const supMesh of supportMeshMapRef.current.values()) {
+          if (supMesh.parent === mesh) {
+            supMesh.setParent(null);
+          }
+        }
         const end = readMeshTransform(mesh);
         onGizmoCommitRef.current(started.id, started.t, end);
       };
