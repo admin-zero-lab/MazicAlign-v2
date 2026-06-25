@@ -100,4 +100,17 @@ export interface SupportPointV2 {
   contactAttachedTo?: { supportId: string; t: number };
   /** Base 가 다른 Bridge 표면 위에 부착된 경우. */
   baseAttachedTo?: { supportId: string; t: number };
+  /**
+   * 좌표 공간.
+   * 'world' (또는 undefined): contact / base / cps 가 world 좌표.
+   *    STL transform 변경 시 transformPointBetween 으로 재계산 필요
+   *    (race 발생 — supports mesh 가 STL 보다 늦게 따라감).
+   * 'stl-local': 좌표가 stlId STL 의 local 좌표. mesh.parent =
+   *    stlMesh 로 설정되어 STL transform 시 Babylon 이 자동 동기.
+   *    race 없음.
+   *
+   * 새 supports 는 'stl-local' 로 생성. 옛 'world' 데이터는 load 시
+   * 자동 마이그레이션.
+   */
+  coordSpace?: "world" | "stl-local";
 }

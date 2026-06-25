@@ -133,6 +133,45 @@ const ViewerV2Page: React.FC = () => {
 
   useShortcutsListener();
 
+  // 옛 supports (world 좌표) → stl-local 자동 마이그레이션.
+  // BabylonScene 의 STL mesh 들이 로드된 후 supports 한 번 변환.
+  // mesh 가 로드되어야 worldToStlLocal 가능 → files / supports 모두
+  // 안정화된 다음 tick 에 실행.
+  useEffect(() => {
+    if (filesLoading) return;
+    if (supports.length === 0) return;
+    const toMigrate = supports.filter((s) => s.coordSpace !== "stl-local");
+    if (toMigrate.length === 0) return;
+    const handle = sceneHandleRef.current;
+    if (!handle) return;
+    // mesh 들이 BabylonScene useEffect 로 마운트 되는데 약간 지연.
+    const t = setTimeout(() => {
+      void (async () => {
+        for (const s of toMigrate) {
+          const stlMesh = handle.worldToStlLocal(s.stlId, s.contact);
+          if (!stlMesh) continue;
+          const newContact = stlMesh;
+          const newBase =
+            handle.worldToStlLocal(s.stlId, s.base) ?? s.base;
+          let newCps = s.curveControlPoints;
+          if (newCps) {
+            newCps = newCps.map(
+              (cp) =>
+                handle.worldToStlLocal(s.stlId, cp) ?? cp,
+            ) as typeof newCps;
+          }
+          await patchSupport(s.id, {
+            contact: newContact,
+            base: newBase,
+            ...(newCps ? { curveControlPoints: newCps } : {}),
+            coordSpace: "stl-local",
+          });
+        }
+      })();
+    }, 500);
+    return () => clearTimeout(t);
+  }, [filesLoading, supports, patchSupport]);
+
   // Bridge pending 상태에서 Esc 누르면 취소.
   useEffect(() => {
     if (!pendingBridge) return;
@@ -939,7 +978,10 @@ const ViewerV2Page: React.FC = () => {
       // (Bridge base 쪽). closure stale 방지 위해 ref 사용.
       const currentSupports = supportsRef.current;
       const affected = currentSupports.filter(
-        (s) => s.stlId === id || s.baseStlId === id,
+        // stl-local 좌표 supports 는 mesh.parent 가 자동 follow → patch X.
+        (s) =>
+          s.coordSpace !== "stl-local" &&
+          (s.stlId === id || s.baseStlId === id),
       );
 
 

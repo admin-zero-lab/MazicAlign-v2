@@ -29,17 +29,22 @@ import type { SupportParams, SupportPointV2 } from "../support/types";
  * 점을 잇게 한다. (base.xz == contact.xz 인 수직 케이스는 자동으로
  * identity 회전이 되어 기존 동작과 같다.)
  */
+/**
+ * STL local 좌표 모드일 때 mesh.parent 로 설정할 STL mesh 를 lookup.
+ * (BabylonScene 의 meshMapRef 를 외부에서 전달.)
+ */
 export function createSupportMesh(
   scene: Scene,
   point: SupportPointV2,
   params: SupportParams,
   material: StandardMaterial,
+  stlMeshMap?: Map<string, Mesh>,
 ): Mesh {
   const isBridge = point.source === "bridge";
 
   // Bridge + 변곡점 → 곡선 Tube.
   if (isBridge && point.curveControlPoints) {
-    return createBridgeCurveTube(scene, point, params, material);
+    return createBridgeCurveTube(scene, point, params, material, stlMeshMap);
   }
 
   const base = new Vector3(point.base[0], point.base[1], point.base[2]);
@@ -118,6 +123,12 @@ export function createSupportMesh(
     stlId: point.stlId,
     baseStlId: point.baseStlId,
   };
+
+  // stl-local 좌표면 STL mesh 의 child 로 → STL transform 시 자동 follow.
+  if (point.coordSpace === "stl-local" && stlMeshMap) {
+    const stlMesh = stlMeshMap.get(point.stlId);
+    if (stlMesh) m.parent = stlMesh;
+  }
   return m;
 }
 
@@ -133,6 +144,7 @@ function createBridgeCurveTube(
   point: SupportPointV2,
   params: SupportParams,
   material: StandardMaterial,
+  stlMeshMap?: Map<string, Mesh>,
 ): Mesh {
   const cps = point.curveControlPoints!;
   const passPoints: Vector3[] = [
@@ -170,6 +182,12 @@ function createBridgeCurveTube(
     stlId: point.stlId,
     baseStlId: point.baseStlId,
   };
+
+  // stl-local 좌표면 STL mesh 의 child 로 → STL transform 시 자동 follow.
+  if (point.coordSpace === "stl-local" && stlMeshMap) {
+    const stlMesh = stlMeshMap.get(point.stlId);
+    if (stlMesh) m.parent = stlMesh;
+  }
   return m;
 }
 

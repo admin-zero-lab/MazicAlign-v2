@@ -35,6 +35,7 @@ import {
   readMeshTransform,
 } from "../utils/transform";
 import { findClosestT } from "../utils/bridge-path";
+import { worldToStlLocal as worldToStlLocalUtil } from "../utils/coord-space";
 import { IDENTITY_TRANSFORM, type TransformV2 } from "../types/transform";
 import {
   createSupportMaterial,
@@ -219,6 +220,14 @@ export interface BabylonSceneHandle {
    * 모델 + 서포트의 부피 (mm³) 합. 출력 시간 / 레진 사용량 추정용.
    */
   getBuildVolumeMm3: () => { model: number; support: number };
+  /**
+   * world 좌표 한 점을 그 STL 의 local 좌표로 변환.
+   * supports 마이그레이션 (world → stl-local) 에 사용.
+   */
+  worldToStlLocal: (
+    stlId: string,
+    world: [number, number, number],
+  ) => [number, number, number] | null;
   /**
    * Bridge 경로 (base → cp1 → cp2 → cp3 → contact) 가 STL 메쉬와
    * 교차하면 변곡점들을 모든 STL 의 maxY + margin 위로 들어올린 새
@@ -1111,7 +1120,13 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       supportMeshMapRef.current.clear();
 
       for (const p of supports) {
-        const m = createSupportMesh(scene, p, supportParams, mat);
+        const m = createSupportMesh(
+          scene,
+          p,
+          supportParams,
+          mat,
+          meshMapRef.current,
+        );
         m.isPickable = editModeRef.current === "support";
         supportMeshMapRef.current.set(p.id, m);
       }
@@ -1521,6 +1536,11 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
             support += computeMeshVolumeMm3(sm);
           }
           return { model, support };
+        },
+        worldToStlLocal(stlId, world) {
+          const stlMesh = meshMapRef.current.get(stlId);
+          if (!stlMesh) return null;
+          return worldToStlLocalUtil(world, stlMesh);
         },
         autoRouteBridge(base, contact, cps, excludeStlIds) {
           const SAFETY_MM = 5;

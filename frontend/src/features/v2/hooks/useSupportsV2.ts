@@ -66,6 +66,7 @@ export function useSupportsV2(projectId: string | undefined) {
         contact: [number, number, number];
         base: [number, number, number];
         curveControlPoints: [number, number, number][];
+        coordSpace: "world" | "stl-local";
       }>,
     ) => {
       await repo.updateSupport(id, patch);
