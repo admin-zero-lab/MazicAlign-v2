@@ -12,6 +12,7 @@ import {
   HemisphericLight,
   HighlightLayer,
   LinesMesh,
+  Matrix,
   Mesh,
   MeshBuilder,
   Plane,
@@ -44,6 +45,12 @@ import {
   createSupportMaterial,
   createSupportMesh,
 } from "../utils/support-render";
+import { buildStlInsideGrid, type StlInsideGrid } from "../utils/stl-sdf";
+import {
+  createBridgeClipMaterial,
+  createSdfTexture,
+  type StlClipData,
+} from "../utils/bridge-clip-material";
 import { autoGenerateSupportPoints } from "../support/utils/auto-generate";
 import { meshesToStlBlob } from "../utils/stl-export";
 import { computeMeshVolumeMm3 } from "../utils/mesh-volume";
@@ -338,6 +345,13 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     const supportMaterialRef = useRef<ReturnType<
       typeof createSupportMaterial
     > | null>(null);
+    // Bridge tube STL 침투 부분 fragment shader 로 discard.
+    // STL 마다 SDF voxel grid + 3D texture. mesh 의 material 은
+    // 단일 bridgeClipMat 공유 (onBindObservable 가 mesh 의 stlId 로 lookup).
+    const stlClipMapRef = useRef<Map<string, StlClipData>>(new Map());
+    const bridgeClipMatRef = useRef<ReturnType<
+      typeof createBridgeClipMaterial
+    > | null>(null);
     const sliceOutlineRef = useRef<LinesMesh | null>(null);
     const sliceFillMeshesRef = useRef<Mesh[]>([]);
     const bridgeMarkerRef = useRef<Mesh | null>(null);
@@ -576,6 +590,13 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       // 빌드플레이트 / 그리드는 별도 plate effect 에서 생성·재생성한다.
 
       supportMaterialRef.current = createSupportMaterial(scene);
+      bridgeClipMatRef.current = createBridgeClipMaterial(scene, (stlId) => {
+        const clip = stlClipMapRef.current.get(stlId);
+        const stlMesh = meshMapRef.current.get(stlId);
+        if (!clip || !stlMesh) return null;
+        stlMesh.computeWorldMatrix(true);
+        return { inv: Matrix.Invert(stlMesh.getWorldMatrix()), clip };
+      });
       const bridgeMat = new StandardMaterial("v2_bridge_marker_mat", scene);
       bridgeMat.diffuseColor = new Color3(1.0, 0.55, 0.15);
       bridgeMat.emissiveColor = new Color3(0.6, 0.3, 0.1);
@@ -1093,6 +1114,12 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         if (!nextIds.has(id)) {
           meshMapRef.current.get(id)?.dispose();
           meshMapRef.current.delete(id);
+          // SDF texture / clip data dispose
+          const clip = stlClipMapRef.current.get(id);
+          if (clip) {
+            clip.texture.dispose();
+            stlClipMapRef.current.delete(id);
+          }
         }
       }
 
@@ -1117,6 +1144,15 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
             mesh.isPickable = true;
             attachDragBehavior(mesh, f.id);
             meshMapRef.current.set(f.id, mesh);
+            // SDF voxel grid 생성 (STL local 좌표 기준, 한 번만).
+            // Bridge tube fragment shader 가 inside 면 discard 하는 데 사용.
+            try {
+              const grid: StlInsideGrid = buildStlInsideGrid(mesh, 1.0);
+              const texture = createSdfTexture(scene, grid);
+              stlClipMapRef.current.set(f.id, { grid, texture });
+            } catch (e) {
+              console.warn("[v2] SDF 생성 실패", f.fileName, e);
+            }
             return mesh;
           } catch (e) {
             console.error("[v2] STL 로드 실패", f.fileName, e);
@@ -1134,6 +1170,16 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         refreshHighlight();
         // load 가 끝난 뒤에야 mesh 가 존재하므로 여기서 다시 attach.
         syncGizmo();
+        // Bridge mesh 들 중 새 SDF 가 생긴 STL 의 것은 clip material 로 교체.
+        const clipMat = bridgeClipMatRef.current;
+        if (clipMat) {
+          for (const [supId, supMesh] of supportMeshMapRef.current) {
+            const sup = supportsRef.current.find((s) => s.id === supId);
+            if (sup?.source === "bridge" && stlClipMapRef.current.has(sup.stlId)) {
+              supMesh.material = clipMat;
+            }
+          }
+        }
       });
 
       // 기존 메쉬들은 transform 변경 가능성 체크
@@ -1168,12 +1214,21 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       for (const sm of supportMeshMapRef.current.values()) sm.dispose();
       supportMeshMapRef.current.clear();
 
+      const clipMat = bridgeClipMatRef.current;
       for (const p of supports) {
+        // Bridge 는 clip material (shader 가 STL inside discard) — 단,
+        // 그 STL 의 SDF 가 있을 때만. 없거나 (단점 서포트) 면 일반 mat.
+        const useMat =
+          p.source === "bridge" &&
+          clipMat &&
+          stlClipMapRef.current.has(p.stlId)
+            ? clipMat
+            : mat;
         const m = createSupportMesh(
           scene,
           p,
           supportParams,
-          mat,
+          useMat,
           meshMapRef.current,
         );
         m.isPickable = editModeRef.current === "support";

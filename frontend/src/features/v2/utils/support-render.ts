@@ -1,6 +1,7 @@
 import {
   Color3,
   Curve3,
+  Material,
   Mesh,
   MeshBuilder,
   Quaternion,
@@ -37,7 +38,7 @@ export function createSupportMesh(
   scene: Scene,
   point: SupportPointV2,
   params: SupportParams,
-  material: StandardMaterial,
+  material: Material,
   stlMeshMap?: Map<string, Mesh>,
 ): Mesh {
   const isBridge = point.source === "bridge";
@@ -143,7 +144,7 @@ function createBridgeCurveTube(
   scene: Scene,
   point: SupportPointV2,
   params: SupportParams,
-  material: StandardMaterial,
+  material: Material,
   stlMeshMap?: Map<string, Mesh>,
 ): Mesh {
   const cps = point.curveControlPoints!;
