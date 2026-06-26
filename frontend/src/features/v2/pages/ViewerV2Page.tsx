@@ -133,42 +133,46 @@ const ViewerV2Page: React.FC = () => {
 
   useShortcutsListener();
 
-  // 옛 supports (world 좌표) → stl-local 자동 마이그레이션.
-  // BabylonScene 의 STL mesh 들이 로드된 후 supports 한 번 변환.
-  // mesh 가 로드되어야 worldToStlLocal 가능 → files / supports 모두
-  // 안정화된 다음 tick 에 실행.
+  // 잘못된 마이그레이션 reverse (stl-local → world).
+  // 0c83dd2 의 timing 문제로 stl-local 좌표가 STL transform 적용 전
+  // 기준으로 저장 → 새로고침 시 saved transform 이 한 번 더 곱해져
+  // 위치 어긋남. 사용자가 현재 보고 있는 위치 (= 잘못된 위치) 를
+  // 그대로 world 좌표로 받아 적고 coordSpace='world' 로 되돌림.
+  // 이후 race 옛 동작으로 복귀 (transform 시 patch chain). 새 supports
+  // 에 timing-safe stl-local 도입은 별도 commit.
   useEffect(() => {
     if (filesLoading) return;
     if (supports.length === 0) return;
-    const toMigrate = supports.filter((s) => s.coordSpace !== "stl-local");
-    if (toMigrate.length === 0) return;
+    const toRevert = supports.filter((s) => s.coordSpace === "stl-local");
+    if (toRevert.length === 0) return;
     const handle = sceneHandleRef.current;
     if (!handle) return;
-    // mesh 들이 BabylonScene useEffect 로 마운트 되는데 약간 지연.
+    // STL transform 이 BabylonScene 의 비동기 STL 로드 후 적용되는
+    // 시점까지 충분히 대기 (1.5s — Promise.all 안의 applyTransform
+    // 보장).
     const t = setTimeout(() => {
       void (async () => {
-        for (const s of toMigrate) {
-          const stlMesh = handle.worldToStlLocal(s.stlId, s.contact);
-          if (!stlMesh) continue;
-          const newContact = stlMesh;
+        for (const s of toRevert) {
+          const newContact = handle.stlLocalToWorld(s.stlId, s.contact);
+          if (!newContact) continue;
           const newBase =
-            handle.worldToStlLocal(s.stlId, s.base) ?? s.base;
+            handle.stlLocalToWorld(s.stlId, s.base) ?? s.base;
           let newCps = s.curveControlPoints;
           if (newCps) {
             newCps = newCps.map(
               (cp) =>
-                handle.worldToStlLocal(s.stlId, cp) ?? cp,
+                handle.stlLocalToWorld(s.stlId, cp) ?? cp,
             ) as typeof newCps;
           }
           await patchSupport(s.id, {
             contact: newContact,
             base: newBase,
             ...(newCps ? { curveControlPoints: newCps } : {}),
-            coordSpace: "stl-local",
+            coordSpace: "world",
           });
         }
       })();
-    }, 500);
+    }, 1500);
     return () => clearTimeout(t);
   }, [filesLoading, supports, patchSupport]);
 
@@ -314,9 +318,9 @@ const ViewerV2Page: React.FC = () => {
           // 거의 같은 점이면 무시.
           return;
         }
-        // 변곡점 3 개 자동 배치: t = 0.25 / 0.50 / 0.75. 항상 직선 상태로
-        // 시작한다 (자동 우회 X). 모델 안을 통과하더라도 사용자가 변곡점/
-        // 끝점을 드래그하면 그 시점에 autoRouteBridge 가 호출되어 lift.
+        // 변곡점 3 개 자동 배치: t = 0.25 / 0.50 / 0.75. 직선 lerp.
+        // tube 가 STL 침투하는 부분은 BabylonScene 의 CSG subtract 로
+        // 제거되어 표면 위 외부만 매끈하게 노출.
         const lerp = (t: number): [number, number, number] => [
           a[0] + (b[0] - a[0]) * t,
           a[1] + (b[1] - a[1]) * t,

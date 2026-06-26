@@ -95,14 +95,14 @@ timeout /t 8 /nobreak >nul
 REM Open Browser
 echo.
 echo Opening browser...
-start http://localhost:5173
+start http://localhost:5173/v2
 
 echo.
 echo ========================================
 echo Dev servers running!
 echo ========================================
 echo.
-echo http://localhost:5173
+echo http://localhost:5173/v2
 echo.
 echo To stop: close the terminal windows, or run stop-dev.bat
 echo.

@@ -35,7 +35,10 @@ import {
   readMeshTransform,
 } from "../utils/transform";
 import { findClosestT } from "../utils/bridge-path";
-import { worldToStlLocal as worldToStlLocalUtil } from "../utils/coord-space";
+import {
+  worldToStlLocal as worldToStlLocalUtil,
+  stlLocalToWorld as stlLocalToWorldUtil,
+} from "../utils/coord-space";
 import { IDENTITY_TRANSFORM, type TransformV2 } from "../types/transform";
 import {
   createSupportMaterial,
@@ -229,6 +232,14 @@ export interface BabylonSceneHandle {
     world: [number, number, number],
   ) => [number, number, number] | null;
   /**
+   * STL local 좌표 한 점을 현재 world 좌표로 변환.
+   * 잘못된 마이그레이션 데이터 reverse (stl-local → world) 에 사용.
+   */
+  stlLocalToWorld: (
+    stlId: string,
+    local: [number, number, number],
+  ) => [number, number, number] | null;
+  /**
    * Bridge 경로 (base → cp1 → cp2 → cp3 → contact) 가 STL 메쉬와
    * 교차하면 변곡점들을 모든 STL 의 maxY + margin 위로 들어올린 새
    * 변곡점 배열을 반환. 교차 없으면 입력 그대로.
@@ -264,6 +275,21 @@ export interface BabylonSceneHandle {
     startY: number,
     excludeStlIds: string[],
   ) => number;
+  /**
+   * 한 점에서 STL 표면으로 가장 가까운 점을 찾고 그 점의 surface normal
+   * 도 함께 반환. hintNormal 이 있으면 그 양방향만 ray cast (가벼움),
+   * 없으면 6 축 모두 시도. 반대편 두께도 측정해 반환 — Bridge path 각
+   * 점에서 push 한계 계산에 사용.
+   */
+  projectToStlSurface: (
+    stlId: string,
+    point: [number, number, number],
+    hintNormal?: [number, number, number],
+  ) => {
+    point: [number, number, number];
+    normal: [number, number, number];
+    thickness: number;
+  } | null;
 }
 
 const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
@@ -914,7 +940,30 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
               // 표면 안쪽으로 push → 서포트 끝 cap 이 표면 밖으로
               // 튀어나오지 않게. Bridge 는 굵기가 커서 더 깊이.
               const n = info.pickInfo.getNormal(true, true);
-              const PEN = bridge ? 0.8 : 0.3;
+              const radius = bridge ? bridgeDiamRef.current * 0.5 : 0;
+              // Bridge 양 끝: cap 가장자리도 표면 안에 박히도록 깊이.
+              // radius × 2 + 0.5mm — cap 자체가 표면 안쪽 radius 깊이.
+              let PEN = bridge ? radius * 2 + 0.5 : 0.3;
+              // 반대편 침투 방지: 표면에서 안쪽으로 ray 쏴 같은 STL 의
+              // 반대 표면까지 거리 측정. cylinder 옆면이 반대편 표면
+              // 접촉 직전까지 (margin = radius + 0.1mm).
+              if (n) {
+                const startOffset = 0.05;
+                const origin = new Vector3(
+                  p.x - n.x * startOffset,
+                  p.y - n.y * startOffset,
+                  p.z - n.z * startOffset,
+                );
+                const dir = new Vector3(-n.x, -n.y, -n.z);
+                const ray = new Ray(origin, dir, 100);
+                const farPick = scene.pickWithRay(ray, (m) => m === mesh);
+                if (farPick?.hit && farPick.distance != null) {
+                  const thickness = farPick.distance + startOffset;
+                  const margin = bridge ? radius + 0.1 : 0.2;
+                  const maxPen = Math.max(0.05, thickness - margin);
+                  PEN = Math.min(PEN, maxPen);
+                }
+              }
               const cx = n ? p.x - n.x * PEN : p.x;
               const cy = n ? p.y - n.y * PEN : p.y;
               const cz = n ? p.z - n.z * PEN : p.z;
@@ -1555,6 +1604,11 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           if (!stlMesh) return null;
           return worldToStlLocalUtil(world, stlMesh);
         },
+        stlLocalToWorld(stlId, local) {
+          const stlMesh = meshMapRef.current.get(stlId);
+          if (!stlMesh) return null;
+          return stlLocalToWorldUtil(local, stlMesh);
+        },
         autoRouteBridge(base, contact, cps, excludeStlIds) {
           const SAFETY_MM = 5;
           const excluded = new Set(excludeStlIds);
@@ -1632,6 +1686,87 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
             }
           }
           return bestY;
+        },
+        projectToStlSurface(stlId, point, hintNormal) {
+          const stlMesh = meshMapRef.current.get(stlId);
+          const scene = sceneRef.current;
+          if (!stlMesh || !scene) return null;
+
+          const origin = new Vector3(point[0], point[1], point[2]);
+          const predicate = (m: import("@babylonjs/core").AbstractMesh) =>
+            m === stlMesh;
+
+          type Hit = {
+            pt: Vector3;
+            normal: Vector3;
+            dist: number;
+          };
+          let best: Hit | null = null;
+
+          const tryDir = (dx: number, dy: number, dz: number) => {
+            const len = Math.hypot(dx, dy, dz);
+            if (len < 1e-6) return;
+            const dir = new Vector3(dx / len, dy / len, dz / len);
+            const ray = new Ray(origin, dir, 200);
+            const pick = scene.pickWithRay(ray, predicate);
+            if (
+              pick?.hit &&
+              pick.pickedPoint &&
+              typeof pick.distance === "number"
+            ) {
+              const n =
+                pick.getNormal(true, true) ?? new Vector3(0, 1, 0);
+              if (!best || pick.distance < best.dist) {
+                best = {
+                  pt: pick.pickedPoint.clone(),
+                  normal: n.clone(),
+                  dist: pick.distance,
+                };
+              }
+            }
+          };
+
+          if (hintNormal) {
+            tryDir(hintNormal[0], hintNormal[1], hintNormal[2]);
+            tryDir(-hintNormal[0], -hintNormal[1], -hintNormal[2]);
+          } else {
+            tryDir(1, 0, 0);
+            tryDir(-1, 0, 0);
+            tryDir(0, 1, 0);
+            tryDir(0, -1, 0);
+            tryDir(0, 0, 1);
+            tryDir(0, 0, -1);
+          }
+          if (!best) return null;
+
+          // normal 이 안쪽을 향하면 뒤집어 (outward) — point 가 STL 밖에
+          // 있을 때 origin → pt 방향과 normal 의 dot 가 양수여야 outward.
+          const bestHit: Hit = best;
+          const toOrigin = origin.subtract(bestHit.pt);
+          if (Vector3.Dot(bestHit.normal, toOrigin) < 0) {
+            bestHit.normal.scaleInPlace(-1);
+          }
+
+          // 반대편 두께: 표면 점에서 inward normal 방향으로 ray, 같은
+          // 메쉬 다음 hit. 모델이 너무 두꺼우면 200mm 까지만 본다.
+          const inward = bestHit.normal.scale(-1);
+          const insideOrigin = bestHit.pt.add(inward.scale(0.05));
+          const insideRay = new Ray(insideOrigin, inward, 200);
+          const farPick = scene.pickWithRay(insideRay, predicate);
+          const thickness =
+            farPick?.hit && typeof farPick.distance === "number"
+              ? farPick.distance + 0.05
+              : Number.POSITIVE_INFINITY;
+
+          return {
+            point: [bestHit.pt.x, bestHit.pt.y, bestHit.pt.z],
+            normal: [
+              bestHit.normal.x,
+              bestHit.normal.y,
+              bestHit.normal.z,
+            ],
+            thickness,
+          };
         },
       }),
       [],
